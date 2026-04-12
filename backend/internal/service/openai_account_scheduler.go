@@ -320,7 +320,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
-	if shouldClearStickySession(account, req.RequestedModel) || !account.IsOpenAI() || !account.IsSchedulable() {
+	if s.service.shouldClearOpenAIStickySession(ctx, account, req.RequestedModel) || !account.IsOpenAI() {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
@@ -591,7 +591,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				continue
 			}
 		}
-		if !account.IsSchedulable() || !account.IsOpenAI() {
+		if !s.service.isOpenAIAccountSelectable(account, req.RequestedModel, s.service.getOpenAIOverLimitModeSettings(ctx)) {
 			continue
 		}
 		// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
@@ -830,6 +830,15 @@ func (s *OpenAIGatewayService) SelectAccountWithScheduler(
 	requiredTransport OpenAIUpstreamTransport,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	decision := OpenAIAccountScheduleDecision{}
+	if s.IsOpenAIOverLimitModeEnabled(ctx) {
+		// 超限模式按 token_proxy 风格直接重新选路，避免 previous_response_id/session_hash
+		// 把后续请求长期粘到刚刚成功的账号上。
+		previousResponseID = ""
+		sessionHash = ""
+		selection, err := s.SelectAccountWithPriorityOnly(ctx, groupID, requestedModel, excludedIDs)
+		decision.Layer = openAIAccountScheduleLayerLoadBalance
+		return selection, decision, err
+	}
 	scheduler := s.getOpenAIAccountScheduler()
 	if scheduler == nil {
 		selection, err := s.SelectAccountWithLoadAwareness(ctx, groupID, sessionHash, requestedModel, excludedIDs)

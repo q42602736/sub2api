@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -624,6 +625,7 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 
 	startTime, endTime, err := parseOpsTimeRange(c, "1h")
 	if err != nil {
+		log.Printf("[Ops][ListRequestDetails] invalid time range raw_query=%q err=%v", c.Request.URL.RawQuery, err)
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -637,14 +639,36 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 
 	filter.Kind = strings.TrimSpace(c.Query("kind"))
 	filter.Platform = strings.TrimSpace(c.Query("platform"))
+	filter.RequestType = strings.TrimSpace(c.Query("request_type"))
 	filter.Model = strings.TrimSpace(c.Query("model"))
 	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.Sort = strings.TrimSpace(c.Query("sort"))
+	if filter.Sort == "" {
+		sortBy := strings.TrimSpace(c.Query("sort_by"))
+		sortOrder := strings.ToLower(strings.TrimSpace(c.Query("sort_order")))
+		switch sortBy {
+		case "duration", "duration_ms":
+			if sortOrder == "asc" {
+				filter.Sort = "duration_asc"
+			} else {
+				filter.Sort = "duration_desc"
+			}
+		case "", "created_at":
+			if sortOrder == "asc" {
+				filter.Sort = "created_at_asc"
+			} else {
+				filter.Sort = "created_at_desc"
+			}
+		default:
+			filter.Sort = sortBy
+		}
+	}
 
 	if v := strings.TrimSpace(c.Query("user_id")); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || id <= 0 {
+			log.Printf("[Ops][ListRequestDetails] invalid user_id raw_query=%q value=%q", c.Request.URL.RawQuery, v)
 			response.BadRequest(c, "Invalid user_id")
 			return
 		}
@@ -653,6 +677,7 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 	if v := strings.TrimSpace(c.Query("api_key_id")); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || id <= 0 {
+			log.Printf("[Ops][ListRequestDetails] invalid api_key_id raw_query=%q value=%q", c.Request.URL.RawQuery, v)
 			response.BadRequest(c, "Invalid api_key_id")
 			return
 		}
@@ -661,6 +686,7 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 	if v := strings.TrimSpace(c.Query("account_id")); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || id <= 0 {
+			log.Printf("[Ops][ListRequestDetails] invalid account_id raw_query=%q value=%q", c.Request.URL.RawQuery, v)
 			response.BadRequest(c, "Invalid account_id")
 			return
 		}
@@ -669,6 +695,7 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 	if v := strings.TrimSpace(c.Query("group_id")); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || id <= 0 {
+			log.Printf("[Ops][ListRequestDetails] invalid group_id raw_query=%q value=%q", c.Request.URL.RawQuery, v)
 			response.BadRequest(c, "Invalid group_id")
 			return
 		}
@@ -678,6 +705,7 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 	if v := strings.TrimSpace(c.Query("min_duration_ms")); v != "" {
 		parsed, err := strconv.Atoi(v)
 		if err != nil || parsed < 0 {
+			log.Printf("[Ops][ListRequestDetails] invalid min_duration_ms raw_query=%q value=%q", c.Request.URL.RawQuery, v)
 			response.BadRequest(c, "Invalid min_duration_ms")
 			return
 		}
@@ -686,6 +714,7 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 	if v := strings.TrimSpace(c.Query("max_duration_ms")); v != "" {
 		parsed, err := strconv.Atoi(v)
 		if err != nil || parsed < 0 {
+			log.Printf("[Ops][ListRequestDetails] invalid max_duration_ms raw_query=%q value=%q", c.Request.URL.RawQuery, v)
 			response.BadRequest(c, "Invalid max_duration_ms")
 			return
 		}
@@ -696,9 +725,11 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 	if err != nil {
 		// Invalid sort/kind/platform etc should be a bad request; keep it simple.
 		if strings.Contains(strings.ToLower(err.Error()), "invalid") {
+			log.Printf("[Ops][ListRequestDetails] invalid filter raw_query=%q filter=%+v err=%v", c.Request.URL.RawQuery, filter, err)
 			response.BadRequest(c, err.Error())
 			return
 		}
+		log.Printf("[Ops][ListRequestDetails] internal error raw_query=%q filter=%+v err=%v", c.Request.URL.RawQuery, filter, err)
 		response.Error(c, http.StatusInternalServerError, "Failed to list request details")
 		return
 	}

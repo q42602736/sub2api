@@ -162,6 +162,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		FallbackModelOpenAI:                  settings.FallbackModelOpenAI,
 		FallbackModelGemini:                  settings.FallbackModelGemini,
 		FallbackModelAntigravity:             settings.FallbackModelAntigravity,
+		OpenAIOverLimitModeEnabled:           settings.OpenAIOverLimitModeEnabled,
+		OpenAIOverLimitCooldownSeconds:       settings.OpenAIOverLimitCooldownSeconds,
 		EnableIdentityPatch:                  settings.EnableIdentityPatch,
 		IdentityPatchPrompt:                  settings.IdentityPatchPrompt,
 		OpsMonitoringEnabled:                 opsEnabled && settings.OpsMonitoringEnabled,
@@ -274,11 +276,13 @@ type UpdateSettingsRequest struct {
 	DefaultSubscriptions []dto.DefaultSubscriptionSetting `json:"default_subscriptions"`
 
 	// Model fallback configuration
-	EnableModelFallback      bool   `json:"enable_model_fallback"`
-	FallbackModelAnthropic   string `json:"fallback_model_anthropic"`
-	FallbackModelOpenAI      string `json:"fallback_model_openai"`
-	FallbackModelGemini      string `json:"fallback_model_gemini"`
-	FallbackModelAntigravity string `json:"fallback_model_antigravity"`
+	EnableModelFallback            bool   `json:"enable_model_fallback"`
+	FallbackModelAnthropic         string `json:"fallback_model_anthropic"`
+	FallbackModelOpenAI            string `json:"fallback_model_openai"`
+	FallbackModelGemini            string `json:"fallback_model_gemini"`
+	FallbackModelAntigravity       string `json:"fallback_model_antigravity"`
+	OpenAIOverLimitModeEnabled     bool   `json:"openai_over_limit_mode_enabled"`
+	OpenAIOverLimitCooldownSeconds int    `json:"openai_over_limit_cooldown_seconds"`
 
 	// Identity patch configuration (Claude -> Gemini)
 	EnableIdentityPatch bool   `json:"enable_identity_patch"`
@@ -833,6 +837,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FallbackModelOpenAI:              req.FallbackModelOpenAI,
 		FallbackModelGemini:              req.FallbackModelGemini,
 		FallbackModelAntigravity:         req.FallbackModelAntigravity,
+		OpenAIOverLimitModeEnabled:       req.OpenAIOverLimitModeEnabled,
+		OpenAIOverLimitCooldownSeconds:   req.OpenAIOverLimitCooldownSeconds,
 		EnableIdentityPatch:              req.EnableIdentityPatch,
 		IdentityPatchPrompt:              req.IdentityPatchPrompt,
 		MinClaudeCodeVersion:             req.MinClaudeCodeVersion,
@@ -1014,6 +1020,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FallbackModelOpenAI:                  updatedSettings.FallbackModelOpenAI,
 		FallbackModelGemini:                  updatedSettings.FallbackModelGemini,
 		FallbackModelAntigravity:             updatedSettings.FallbackModelAntigravity,
+		OpenAIOverLimitModeEnabled:           updatedSettings.OpenAIOverLimitModeEnabled,
+		OpenAIOverLimitCooldownSeconds:       updatedSettings.OpenAIOverLimitCooldownSeconds,
 		EnableIdentityPatch:                  updatedSettings.EnableIdentityPatch,
 		IdentityPatchPrompt:                  updatedSettings.IdentityPatchPrompt,
 		OpsMonitoringEnabled:                 updatedSettings.OpsMonitoringEnabled,
@@ -1256,6 +1264,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.FallbackModelAntigravity != after.FallbackModelAntigravity {
 		changed = append(changed, "fallback_model_antigravity")
+	}
+	if before.OpenAIOverLimitModeEnabled != after.OpenAIOverLimitModeEnabled {
+		changed = append(changed, "openai_over_limit_mode_enabled")
+	}
+	if before.OpenAIOverLimitCooldownSeconds != after.OpenAIOverLimitCooldownSeconds {
+		changed = append(changed, "openai_over_limit_cooldown_seconds")
 	}
 	if before.EnableIdentityPatch != after.EnableIdentityPatch {
 		changed = append(changed, "enable_identity_patch")

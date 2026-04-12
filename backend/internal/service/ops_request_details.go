@@ -37,6 +37,41 @@ type OpsRequestDetail struct {
 	AccountID *int64 `json:"account_id,omitempty"`
 	GroupID   *int64 `json:"group_id,omitempty"`
 
+	UserEmail   string `json:"user_email,omitempty"`
+	APIKeyName  string `json:"api_key_name,omitempty"`
+	AccountName string `json:"account_name,omitempty"`
+	GroupName   string `json:"group_name,omitempty"`
+
+	RequestType      string `json:"request_type,omitempty"`
+	ServiceTier      string `json:"service_tier,omitempty"`
+	ReasoningEffort  string `json:"reasoning_effort,omitempty"`
+	InboundEndpoint  string `json:"inbound_endpoint,omitempty"`
+	UpstreamEndpoint string `json:"upstream_endpoint,omitempty"`
+	UpstreamModel    string `json:"upstream_model,omitempty"`
+	BillingMode      string `json:"billing_mode,omitempty"`
+	UserAgent        string `json:"user_agent,omitempty"`
+	IPAddress        string `json:"ip_address,omitempty"`
+
+	InputTokens           *int     `json:"input_tokens,omitempty"`
+	OutputTokens          *int     `json:"output_tokens,omitempty"`
+	CacheCreationTokens   *int     `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens       *int     `json:"cache_read_tokens,omitempty"`
+	CacheCreation5mTokens *int     `json:"cache_creation_5m_tokens,omitempty"`
+	CacheCreation1hTokens *int     `json:"cache_creation_1h_tokens,omitempty"`
+	InputCost             *float64 `json:"input_cost,omitempty"`
+	OutputCost            *float64 `json:"output_cost,omitempty"`
+	CacheCreationCost     *float64 `json:"cache_creation_cost,omitempty"`
+	CacheReadCost         *float64 `json:"cache_read_cost,omitempty"`
+	TotalCost             *float64 `json:"total_cost,omitempty"`
+	ActualCost            *float64 `json:"actual_cost,omitempty"`
+	RateMultiplier        *float64 `json:"rate_multiplier,omitempty"`
+	AccountRateMultiplier *float64 `json:"account_rate_multiplier,omitempty"`
+	BillingType           *int     `json:"billing_type,omitempty"`
+	FirstTokenMs          *int     `json:"first_token_ms,omitempty"`
+	ImageCount            *int     `json:"image_count,omitempty"`
+	ImageSize             string   `json:"image_size,omitempty"`
+	CacheTTLOverridden    *bool    `json:"cache_ttl_overridden,omitempty"`
+
 	Stream bool `json:"stream"`
 }
 
@@ -54,9 +89,10 @@ type OpsRequestDetailFilter struct {
 	APIKeyID  *int64
 	AccountID *int64
 
-	Model     string
-	RequestID string
-	Query     string
+	RequestType string
+	Model       string
+	RequestID   string
+	Query       string
 
 	MinDurationMs *int
 	MaxDurationMs *int

@@ -94,6 +94,19 @@ const gatewayForwardingCacheTTL = 60 * time.Second
 const gatewayForwardingErrorTTL = 5 * time.Second
 const gatewayForwardingDBTimeout = 5 * time.Second
 
+type cachedOpenAIOverLimitSettings struct {
+	enabled         bool
+	cooldownSeconds int
+	expiresAt       int64 // unix nano
+}
+
+var openAIOverLimitSettingsCache atomic.Value // *cachedOpenAIOverLimitSettings
+var openAIOverLimitSettingsSF singleflight.Group
+
+const openAIOverLimitSettingsCacheTTL = 60 * time.Second
+const openAIOverLimitSettingsErrorTTL = 5 * time.Second
+const openAIOverLimitSettingsDBTimeout = 5 * time.Second
+
 // DefaultSubscriptionGroupReader validates group references used by default subscriptions.
 type DefaultSubscriptionGroupReader interface {
 	GetByID(ctx context.Context, id int64) (*Group, error)
@@ -567,6 +580,8 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 	updates[SettingKeyFallbackModelOpenAI] = settings.FallbackModelOpenAI
 	updates[SettingKeyFallbackModelGemini] = settings.FallbackModelGemini
 	updates[SettingKeyFallbackModelAntigravity] = settings.FallbackModelAntigravity
+	updates[SettingKeyOpenAIOverLimitModeEnabled] = strconv.FormatBool(settings.OpenAIOverLimitModeEnabled)
+	updates[SettingKeyOpenAIOverLimitCooldownSeconds] = strconv.Itoa(normalizeOpenAIOverLimitCooldownSeconds(settings.OpenAIOverLimitCooldownSeconds))
 
 	// Identity patch configuration (Claude -> Gemini)
 	updates[SettingKeyEnableIdentityPatch] = strconv.FormatBool(settings.EnableIdentityPatch)
@@ -615,6 +630,12 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 			metadataPassthrough:    settings.EnableMetadataPassthrough,
 			cchSigning:             settings.EnableCCHSigning,
 			expiresAt:              time.Now().Add(gatewayForwardingCacheTTL).UnixNano(),
+		})
+		openAIOverLimitSettingsSF.Forget("openai_over_limit_settings")
+		openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitSettings{
+			enabled:         settings.OpenAIOverLimitModeEnabled,
+			cooldownSeconds: normalizeOpenAIOverLimitCooldownSeconds(settings.OpenAIOverLimitCooldownSeconds),
+			expiresAt:       time.Now().Add(openAIOverLimitSettingsCacheTTL).UnixNano(),
 		})
 		if s.onUpdate != nil {
 			s.onUpdate() // Invalidate cache after settings update
@@ -914,11 +935,13 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeySMTPPort:                         "587",
 		SettingKeySMTPUseTLS:                       "false",
 		// Model fallback defaults
-		SettingKeyEnableModelFallback:      "false",
-		SettingKeyFallbackModelAnthropic:   "claude-3-5-sonnet-20241022",
-		SettingKeyFallbackModelOpenAI:      "gpt-4o",
-		SettingKeyFallbackModelGemini:      "gemini-2.5-pro",
-		SettingKeyFallbackModelAntigravity: "gemini-2.5-pro",
+		SettingKeyEnableModelFallback:            "false",
+		SettingKeyFallbackModelAnthropic:         "claude-3-5-sonnet-20241022",
+		SettingKeyFallbackModelOpenAI:            "gpt-4o",
+		SettingKeyFallbackModelGemini:            "gemini-2.5-pro",
+		SettingKeyFallbackModelAntigravity:       "gemini-2.5-pro",
+		SettingKeyOpenAIOverLimitModeEnabled:     "false",
+		SettingKeyOpenAIOverLimitCooldownSeconds: "15",
 		// Identity patch defaults
 		SettingKeyEnableIdentityPatch: "true",
 		SettingKeyIdentityPatchPrompt: "",
@@ -1175,6 +1198,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.FallbackModelOpenAI = s.getStringOrDefault(settings, SettingKeyFallbackModelOpenAI, "gpt-4o")
 	result.FallbackModelGemini = s.getStringOrDefault(settings, SettingKeyFallbackModelGemini, "gemini-2.5-pro")
 	result.FallbackModelAntigravity = s.getStringOrDefault(settings, SettingKeyFallbackModelAntigravity, "gemini-2.5-pro")
+	result.OpenAIOverLimitModeEnabled = settings[SettingKeyOpenAIOverLimitModeEnabled] == "true"
+	result.OpenAIOverLimitCooldownSeconds = normalizeOpenAIOverLimitCooldownSeconds(parseIntOrDefault(settings[SettingKeyOpenAIOverLimitCooldownSeconds], 15))
 
 	// Identity patch settings (default: enabled, to preserve existing behavior)
 	if v, ok := settings[SettingKeyEnableIdentityPatch]; ok && v != "" {
@@ -1304,6 +1329,70 @@ func (s *SettingService) getStringOrDefault(settings map[string]string, key, def
 		return value
 	}
 	return defaultValue
+}
+
+func parseIntOrDefault(raw string, defaultValue int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
+func normalizeOpenAIOverLimitCooldownSeconds(value int) int {
+	if value < 1 {
+		return 15
+	}
+	if value > 600 {
+		return 600
+	}
+	return value
+}
+
+func (s *SettingService) GetOpenAIOverLimitModeSettings(ctx context.Context) (bool, int, error) {
+	nowUnix := time.Now().UnixNano()
+	if cached, ok := openAIOverLimitSettingsCache.Load().(*cachedOpenAIOverLimitSettings); ok && cached != nil && cached.expiresAt > nowUnix {
+		return cached.enabled, cached.cooldownSeconds, nil
+	}
+
+	value, err, _ := openAIOverLimitSettingsSF.Do("openai_over_limit_settings", func() (any, error) {
+		readCtx, cancel := context.WithTimeout(context.Background(), openAIOverLimitSettingsDBTimeout)
+		defer cancel()
+
+		values, readErr := s.settingRepo.GetMultiple(readCtx, []string{
+			SettingKeyOpenAIOverLimitModeEnabled,
+			SettingKeyOpenAIOverLimitCooldownSeconds,
+		})
+		if readErr != nil {
+			openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitSettings{
+				enabled:         false,
+				cooldownSeconds: 15,
+				expiresAt:       time.Now().Add(openAIOverLimitSettingsErrorTTL).UnixNano(),
+			})
+			return nil, readErr
+		}
+
+		enabled := values[SettingKeyOpenAIOverLimitModeEnabled] == "true"
+		cooldownSeconds := normalizeOpenAIOverLimitCooldownSeconds(parseIntOrDefault(values[SettingKeyOpenAIOverLimitCooldownSeconds], 15))
+		openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitSettings{
+			enabled:         enabled,
+			cooldownSeconds: cooldownSeconds,
+			expiresAt:       time.Now().Add(openAIOverLimitSettingsCacheTTL).UnixNano(),
+		})
+		return &cachedOpenAIOverLimitSettings{
+			enabled:         enabled,
+			cooldownSeconds: cooldownSeconds,
+		}, nil
+	})
+	if err != nil {
+		return false, 15, err
+	}
+
+	resolved, _ := value.(*cachedOpenAIOverLimitSettings)
+	if resolved == nil {
+		return false, 15, nil
+	}
+	return resolved.enabled, resolved.cooldownSeconds, nil
 }
 
 // IsTurnstileEnabled 检查是否启用 Turnstile 验证

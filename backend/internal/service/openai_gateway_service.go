@@ -22,6 +22,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
@@ -319,6 +320,7 @@ type OpenAIGatewayService struct {
 	billingService        *BillingService
 	rateLimitService      *RateLimitService
 	billingCacheService   *BillingCacheService
+	settingService        *SettingService
 	userGroupRateResolver *userGroupRateResolver
 	httpUpstream          HTTPUpstream
 	deferredService       *DeferredService
@@ -338,10 +340,16 @@ type OpenAIGatewayService struct {
 	openaiWSPassthroughDialer     openAIWSClientDialer
 	openaiAccountStats            *openAIAccountRuntimeStats
 
-	openaiWSFallbackUntil sync.Map // key: int64(accountID), value: time.Time
-	openaiWSRetryMetrics  openAIWSRetryMetrics
-	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
-	codexSnapshotThrottle *accountWriteThrottle
+	openaiWSFallbackUntil        sync.Map // key: int64(accountID), value: time.Time
+	openAIOverLimitCooldownUntil sync.Map // key: int64(accountID), value: time.Time
+	openaiWSRetryMetrics         openAIWSRetryMetrics
+	responseHeaderFilter         *responseheaders.CompiledHeaderFilter
+	codexSnapshotThrottle        *accountWriteThrottle
+}
+
+type openAIOverLimitModeSettings struct {
+	enabled  bool
+	cooldown time.Duration
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
@@ -398,6 +406,134 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	return svc
+}
+
+func (s *OpenAIGatewayService) SetSettingService(settingService *SettingService) {
+	if s != nil {
+		s.settingService = settingService
+	}
+}
+
+func (s *OpenAIGatewayService) getOpenAIOverLimitModeSettings(ctx context.Context) openAIOverLimitModeSettings {
+	if s == nil || s.settingService == nil {
+		return openAIOverLimitModeSettings{}
+	}
+	enabled, cooldownSeconds, err := s.settingService.GetOpenAIOverLimitModeSettings(ctx)
+	if err != nil {
+		slog.Warn("load openai over-limit settings failed", "error", err)
+		return openAIOverLimitModeSettings{}
+	}
+	return openAIOverLimitModeSettings{
+		enabled:  enabled,
+		cooldown: time.Duration(cooldownSeconds) * time.Second,
+	}
+}
+
+func normalizeOpenAIOverLimitCooldownModel(requestedModel string) string {
+	trimmed := strings.TrimSpace(requestedModel)
+	if trimmed == "" {
+		return "*"
+	}
+	return NormalizeOpenAICompatRequestedModel(trimmed)
+}
+
+func openAIOverLimitCooldownKey(accountID int64, requestedModel string) string {
+	return fmt.Sprintf("%d:%s", accountID, normalizeOpenAIOverLimitCooldownModel(requestedModel))
+}
+
+func openAIRequestedModelFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	model, _ := ctx.Value(ctxkey.Model).(string)
+	return strings.TrimSpace(model)
+}
+
+func (s *OpenAIGatewayService) IsOpenAIOverLimitModeEnabled(ctx context.Context) bool {
+	return s.getOpenAIOverLimitModeSettings(ctx).enabled
+}
+
+func (s *OpenAIGatewayService) markOpenAIOverLimitCooldown(accountID int64, requestedModel string, cooldown time.Duration) {
+	if s == nil || accountID <= 0 || cooldown <= 0 {
+		return
+	}
+	s.openAIOverLimitCooldownUntil.Store(openAIOverLimitCooldownKey(accountID, requestedModel), time.Now().Add(cooldown))
+}
+
+func (s *OpenAIGatewayService) isOpenAIAccountInOverLimitCooldown(accountID int64, requestedModel string) bool {
+	if s == nil || accountID <= 0 {
+		return false
+	}
+	key := openAIOverLimitCooldownKey(accountID, requestedModel)
+	value, ok := s.openAIOverLimitCooldownUntil.Load(key)
+	if !ok {
+		return false
+	}
+	until, ok := value.(time.Time)
+	if !ok {
+		s.openAIOverLimitCooldownUntil.Delete(key)
+		return false
+	}
+	if time.Now().Before(until) {
+		return true
+	}
+	s.openAIOverLimitCooldownUntil.Delete(key)
+	return false
+}
+
+func (s *OpenAIGatewayService) shouldClearOpenAIStickySession(ctx context.Context, account *Account, requestedModel string) bool {
+	if !shouldClearStickySession(account, requestedModel) {
+		return false
+	}
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if !settings.enabled || account == nil || !account.IsOpenAI() {
+		return true
+	}
+	now := time.Now()
+	if account.Status != StatusError &&
+		account.Status != StatusDisabled &&
+		account.Schedulable &&
+		(account.TempUnschedulableUntil == nil || !now.Before(*account.TempUnschedulableUntil)) &&
+		account.RateLimitResetAt != nil &&
+		now.Before(*account.RateLimitResetAt) {
+		return false
+	}
+	return true
+}
+
+func (s *OpenAIGatewayService) isOpenAIAccountSelectable(account *Account, requestedModel string, settings openAIOverLimitModeSettings) bool {
+	if account == nil || !account.IsOpenAI() {
+		return false
+	}
+	if !account.IsActive() || !account.Schedulable {
+		return false
+	}
+	now := time.Now()
+	if account.AutoPauseOnExpired && account.ExpiresAt != nil && !now.Before(*account.ExpiresAt) {
+		return false
+	}
+	if account.OverloadUntil != nil && now.Before(*account.OverloadUntil) {
+		return false
+	}
+	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
+		return false
+	}
+	if account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt) {
+		if !settings.enabled || s.isOpenAIAccountInOverLimitCooldown(account.ID, requestedModel) {
+			return false
+		}
+	}
+	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
+		return false
+	}
+	return true
+}
+
+func isUngroupedOpenAIAccount(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	return len(account.GroupIDs) == 0 && len(account.Groups) == 0
 }
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）
@@ -1276,14 +1412,14 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 
 	// 检查账号是否需要清理粘性会话
 	// Check if sticky session should be cleared
-	if shouldClearStickySession(account, requestedModel) {
+	if s.shouldClearOpenAIStickySession(ctx, account, requestedModel) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
 
 	// 验证账号是否可用于当前请求
 	// Verify account is usable for current request
-	if !account.IsSchedulable() || !account.IsOpenAI() {
+	if !s.isOpenAIAccountSelectable(account, requestedModel, s.getOpenAIOverLimitModeSettings(ctx)) {
 		return nil
 	}
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
@@ -1451,12 +1587,11 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 		if accountID > 0 && !isExcluded(accountID) {
 			account, err := s.getSchedulableAccount(ctx, accountID)
 			if err == nil {
-				clearSticky := shouldClearStickySession(account, requestedModel)
+				clearSticky := s.shouldClearOpenAIStickySession(ctx, account, requestedModel)
 				if clearSticky {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				}
-				if !clearSticky && account.IsSchedulable() && account.IsOpenAI() &&
-					(requestedModel == "" || account.IsModelSupported(requestedModel)) {
+				if !clearSticky && s.isOpenAIAccountSelectable(account, requestedModel, s.getOpenAIOverLimitModeSettings(ctx)) {
 					account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, requestedModel)
 					if account == nil {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1494,7 +1629,7 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 		// Scheduler snapshots can be temporarily stale (bucket rebuild is throttled);
 		// re-check schedulability here so recently rate-limited/overloaded accounts
 		// are not selected again before the bucket is rebuilt.
-		if !acc.IsSchedulable() {
+		if !s.isOpenAIAccountSelectable(acc, requestedModel, s.getOpenAIOverLimitModeSettings(ctx)) {
 			continue
 		}
 		if requestedModel != "" && !acc.IsModelSupported(requestedModel) {
@@ -1615,7 +1750,75 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 	return nil, ErrNoAvailableAccounts
 }
 
+// SelectAccountWithPriorityOnly 按 token_proxy 风格严格走“优先级 + LRU”，
+// 不做负载均衡随机化，也不使用粘性会话。
+func (s *OpenAIGatewayService) SelectAccountWithPriorityOnly(ctx context.Context, groupID *int64, requestedModel string, excludedIDs map[int64]struct{}) (*AccountSelectionResult, error) {
+	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
+		slog.Warn("channel pricing restriction blocked request",
+			"group_id", derefGroupID(groupID),
+			"model", requestedModel)
+		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
+	}
+
+	account, err := s.selectAccountForModelWithExclusions(ctx, groupID, "", requestedModel, excludedIDs, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+	if err == nil && result.Acquired {
+		return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil)
+	}
+
+	cfg := s.schedulingConfig()
+	return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
+		AccountID:      account.ID,
+		MaxConcurrency: account.Concurrency,
+		Timeout:        cfg.FallbackWaitTimeout,
+		MaxWaiting:     cfg.FallbackMaxWaiting,
+	})
+}
+
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64) ([]Account, error) {
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if settings.enabled && s.accountRepo != nil {
+		var (
+			accounts []Account
+			err      error
+		)
+		if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+			accounts, err = s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+		} else if groupID != nil {
+			accounts, err = s.accountRepo.ListByGroup(ctx, *groupID)
+		} else {
+			accounts, err = s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("query openai accounts failed: %w", err)
+		}
+		filtered := make([]Account, 0, len(accounts))
+		for i := range accounts {
+			account := accounts[i]
+			if account.Platform != PlatformOpenAI {
+				continue
+			}
+			if groupID == nil && s.cfg != nil && s.cfg.RunMode != config.RunModeSimple && !isUngroupedOpenAIAccount(&account) {
+				continue
+			}
+			if !s.isOpenAIAccountSelectable(&account, "", settings) {
+				continue
+			}
+			filtered = append(filtered, account)
+		}
+		sort.Slice(filtered, func(i, j int) bool {
+			if filtered[i].Priority != filtered[j].Priority {
+				return filtered[i].Priority < filtered[j].Priority
+			}
+			return filtered[i].ID < filtered[j].ID
+		})
+		return filtered, nil
+	}
+
 	if s.schedulerSnapshot != nil {
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, PlatformOpenAI, false)
 		return accounts, err
@@ -1648,7 +1851,8 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.
 	}
 
 	fresh := account
-	if s.schedulerSnapshot != nil {
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if s.schedulerSnapshot != nil || settings.enabled {
 		current, err := s.getSchedulableAccount(ctx, account.ID)
 		if err != nil || current == nil {
 			return nil
@@ -1656,10 +1860,7 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.
 		fresh = current
 	}
 
-	if !fresh.IsSchedulable() || !fresh.IsOpenAI() {
-		return nil
-	}
-	if requestedModel != "" && !fresh.IsModelSupported(requestedModel) {
+	if !s.isOpenAIAccountSelectable(fresh, requestedModel, settings) {
 		return nil
 	}
 	return fresh
@@ -1670,6 +1871,10 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 		return nil
 	}
 	if s.schedulerSnapshot == nil || s.accountRepo == nil {
+		settings := s.getOpenAIOverLimitModeSettings(ctx)
+		if !s.isOpenAIAccountSelectable(account, requestedModel, settings) {
+			return nil
+		}
 		return account
 	}
 
@@ -1678,10 +1883,8 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 		return nil
 	}
 	syncOpenAICodexRateLimitFromExtra(ctx, s.accountRepo, latest, time.Now())
-	if !latest.IsSchedulable() || !latest.IsOpenAI() {
-		return nil
-	}
-	if requestedModel != "" && !latest.IsModelSupported(requestedModel) {
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if !s.isOpenAIAccountSelectable(latest, requestedModel, settings) {
 		return nil
 	}
 	return latest
@@ -1692,7 +1895,10 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 		account *Account
 		err     error
 	)
-	if s.schedulerSnapshot != nil {
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if settings.enabled && s.accountRepo != nil {
+		account, err = s.accountRepo.GetByID(ctx, accountID)
+	} else if s.schedulerSnapshot != nil {
 		account, err = s.schedulerSnapshot.GetAccount(ctx, accountID)
 	} else {
 		account, err = s.accountRepo.GetByID(ctx, accountID)
@@ -1701,6 +1907,9 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 		return account, err
 	}
 	syncOpenAICodexRateLimitFromExtra(ctx, s.accountRepo, account, time.Now())
+	if !s.isOpenAIAccountSelectable(account, "", settings) {
+		return nil, nil
+	}
 	return account, nil
 }
 
@@ -1792,7 +2001,20 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 
 func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account) {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
+	s.handleOpenAIUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
+}
+
+func (s *OpenAIGatewayService) handleOpenAIUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, body []byte) bool {
+	if statusCode == http.StatusTooManyRequests && account != nil && account.IsOpenAI() {
+		settings := s.getOpenAIOverLimitModeSettings(ctx)
+		if settings.enabled {
+			s.markOpenAIOverLimitCooldown(account.ID, openAIRequestedModelFromContext(ctx), settings.cooldown)
+		}
+	}
+	if s.rateLimitService == nil {
+		return false
+	}
+	return s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
 }
 
 // Forward forwards request to OpenAI API
@@ -2780,9 +3002,7 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
-	if s.rateLimitService != nil {
-		_ = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
-	}
+	_ = s.handleOpenAIUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform:             account.Platform,
 		AccountID:            account.ID,
@@ -2823,12 +3043,10 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
-	if s.rateLimitService != nil {
-		// Passthrough mode preserves the raw upstream error response, but runtime
-		// account state still needs to be updated so sticky routing can stop
-		// reusing a freshly rate-limited account.
-		_ = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
-	}
+	// Passthrough mode preserves the raw upstream error response, but runtime
+	// account state still needs to be updated so sticky routing can stop
+	// reusing a freshly rate-limited account.
+	_ = s.handleOpenAIUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform:             account.Platform,
 		AccountID:            account.ID,
@@ -3332,9 +3550,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 
 	// Handle upstream error (mark account status)
 	shouldDisable := false
-	if s.rateLimitService != nil {
-		shouldDisable = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
-	}
+	shouldDisable = s.handleOpenAIUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 	kind := "http_error"
 	if shouldDisable {
 		kind = "failover"
@@ -3467,11 +3683,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 
 	// Track rate limits and decide whether to trigger secondary failover.
 	shouldDisable := false
-	if s.rateLimitService != nil {
-		shouldDisable = s.rateLimitService.HandleUpstreamError(
-			c.Request.Context(), account, resp.StatusCode, resp.Header, body,
-		)
-	}
+	shouldDisable = s.handleOpenAIUpstreamError(c.Request.Context(), account, resp.StatusCode, resp.Header, body)
 	kind := "http_error"
 	if shouldDisable {
 		kind = "failover"

@@ -4346,7 +4346,11 @@ export default {
         title: 'Gateway Scheduling Settings',
         description: 'Control API Key scheduling behavior',
         allowUngroupedKey: 'Allow Ungrouped Key Scheduling',
-        allowUngroupedKeyHint: 'When disabled, API Keys not assigned to any group cannot make requests (403 Forbidden). Keep disabled to ensure all Keys belong to a specific group.'
+        allowUngroupedKeyHint: 'When disabled, API Keys not assigned to any group cannot make requests (403 Forbidden). Keep disabled to ensure all Keys belong to a specific group.',
+        openaiOverLimitMode: 'OpenAI Over-Limit Mode',
+        openaiOverLimitModeHint: 'When enabled, OpenAI /v1/responses, /v1/messages, and /v1/chat/completions accounts that hit 429 enter only a short cooldown instead of being skipped until the real upstream reset time. This allows them to rejoin scheduling and potentially reuse upstream cache later.',
+        openaiOverLimitCooldown: 'Over-Limit Cooldown (seconds)',
+        openaiOverLimitCooldownHint: 'Short cooldown applied after a 429 response. Once the cooldown expires, OpenAI accounts still marked as rate-limited upstream may re-enter the scheduler candidate set. Range: 1-600 seconds.'
       },
       gatewayForwarding: {
         title: 'Request Forwarding',

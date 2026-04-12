@@ -181,9 +181,45 @@ export interface OpsRequestDetail {
   message?: string
 
   user_id?: number | null
+  user_email?: string
   api_key_id?: number | null
+  api_key_name?: string
   account_id?: number | null
+  account_name?: string
   group_id?: number | null
+  group_name?: string
+
+  request_type?: string
+  service_tier?: string
+  reasoning_effort?: string
+  inbound_endpoint?: string
+  upstream_endpoint?: string
+  upstream_model?: string
+  model_mapping_chain?: string | null
+
+  input_tokens?: number | null
+  output_tokens?: number | null
+  cache_creation_tokens?: number | null
+  cache_read_tokens?: number | null
+  cache_creation_5m_tokens?: number | null
+  cache_creation_1h_tokens?: number | null
+
+  input_cost?: number | null
+  output_cost?: number | null
+  cache_creation_cost?: number | null
+  cache_read_cost?: number | null
+  total_cost?: number | null
+  actual_cost?: number | null
+  rate_multiplier?: number | null
+  account_rate_multiplier?: number | null
+  billing_type?: number | null
+  billing_mode?: string | null
+  first_token_ms?: number | null
+  image_count?: number | null
+  image_size?: string | null
+  user_agent?: string | null
+  ip_address?: string | null
+  cache_ttl_overridden?: boolean | null
 
   stream?: boolean
 }
@@ -201,6 +237,7 @@ export interface OpsRequestDetailsParams {
   user_id?: number
   api_key_id?: number
   account_id?: number
+  request_type?: 'unknown' | 'sync' | 'stream' | 'ws_v2'
 
   model?: string
   request_id?: string
@@ -1225,8 +1262,14 @@ export async function listRequestErrorUpstreamErrors(
   return data
 }
 
-export async function listRequestDetails(params: OpsRequestDetailsParams): Promise<OpsRequestDetailsResponse> {
-  const { data } = await apiClient.get<OpsRequestDetailsResponse>('/admin/ops/requests', { params })
+export async function listRequestDetails(
+  params: OpsRequestDetailsParams,
+  options?: OpsRequestOptions
+): Promise<OpsRequestDetailsResponse> {
+  const { data } = await apiClient.get<OpsRequestDetailsResponse>('/admin/ops/requests', {
+    params,
+    signal: options?.signal
+  })
   return data
 }
 

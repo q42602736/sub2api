@@ -672,8 +672,13 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				ErrorPhase: "upstream",
 				ErrorType:  "upstream_error",
 				// Severity/retryability should reflect the upstream failure, not the final client status (200).
-				Severity:          classifyOpsSeverity("upstream_error", effectiveUpstreamStatus),
-				StatusCode:        status,
+				Severity: classifyOpsSeverity("upstream_error", effectiveUpstreamStatus),
+				StatusCode: func() int {
+					if effectiveUpstreamStatus > 0 {
+						return effectiveUpstreamStatus
+					}
+					return status
+				}(),
 				IsBusinessLimited: false,
 				IsCountTokens:     isCountTokensRequest(c),
 

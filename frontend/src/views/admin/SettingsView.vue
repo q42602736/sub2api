@@ -1652,10 +1652,33 @@
                   {{ t('admin.settings.scheduling.allowUngroupedKeyHint') }}
                 </p>
               </div>
-              <label class="toggle">
-                <input v-model="form.allow_ungrouped_key_scheduling" type="checkbox" />
-                <span class="toggle-slider"></span>
+              <Toggle v-model="form.allow_ungrouped_key_scheduling" />
+            </div>
+            <div class="mt-6 flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.scheduling.openaiOverLimitMode') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.scheduling.openaiOverLimitModeHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.openai_over_limit_mode_enabled" />
+            </div>
+            <div class="mt-4">
+              <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                {{ t('admin.settings.scheduling.openaiOverLimitCooldown') }}
               </label>
+              <input
+                v-model="form.openai_over_limit_cooldown_seconds"
+                type="number"
+                min="1"
+                max="600"
+                class="input max-w-xs"
+              />
+              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.settings.scheduling.openaiOverLimitCooldownHint') }}
+              </p>
             </div>
           </div>
         </div>
@@ -2727,6 +2750,8 @@ const form = reactive<SettingsForm>({
   fallback_model_openai: 'gpt-4o',
   fallback_model_gemini: 'gemini-2.5-pro',
   fallback_model_antigravity: 'gemini-2.5-pro',
+  openai_over_limit_mode_enabled: false,
+  openai_over_limit_cooldown_seconds: 15,
   // Identity patch (Claude -> Gemini)
   enable_identity_patch: true,
   identity_patch_prompt: '',
@@ -3134,6 +3159,8 @@ async function saveSettings() {
       fallback_model_openai: form.fallback_model_openai,
       fallback_model_gemini: form.fallback_model_gemini,
       fallback_model_antigravity: form.fallback_model_antigravity,
+      openai_over_limit_mode_enabled: form.openai_over_limit_mode_enabled,
+      openai_over_limit_cooldown_seconds: Number(form.openai_over_limit_cooldown_seconds) || 15,
       enable_identity_patch: form.enable_identity_patch,
       identity_patch_prompt: form.identity_patch_prompt,
       min_claude_code_version: form.min_claude_code_version,

@@ -4508,7 +4508,11 @@ export default {
         title: '网关调度设置',
         description: '控制 API Key 的调度行为',
         allowUngroupedKey: '允许未分组 Key 调度',
-        allowUngroupedKeyHint: '关闭后，未分配到任何分组的 API Key 将无法发起请求（返回 403）。建议保持关闭以确保所有 Key 都归属明确的分组。'
+        allowUngroupedKeyHint: '关闭后，未分配到任何分组的 API Key 将无法发起请求（返回 403）。建议保持关闭以确保所有 Key 都归属明确的分组。',
+        openaiOverLimitMode: 'OpenAI 超限模式',
+        openaiOverLimitModeHint: '开启后，OpenAI 的 /v1/responses、/v1/messages、/v1/chat/completions 在遇到 429 账号时只做短冷却，不再一直跳过到真实 reset 时间，允许后续重新参与调度以复用上游缓存。',
+        openaiOverLimitCooldown: '超限冷却秒数',
+        openaiOverLimitCooldownHint: '429 后进入短冷却的秒数。超出冷却窗口后，已被上游标记限流的 OpenAI 账号会重新进入调度候选。范围 1-600 秒。'
       },
       gatewayForwarding: {
         title: '请求转发行为',

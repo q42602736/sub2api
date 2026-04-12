@@ -108,6 +108,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
+	allowDefaultModelFallback := !h.gatewayService.IsOpenAIOverLimitModeEnabled(c.Request.Context())
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -134,7 +135,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			)
 			if len(failedAccountIDs) == 0 {
 				defaultModel := ""
-				if apiKey.Group != nil {
+				if allowDefaultModelFallback && apiKey.Group != nil {
 					defaultModel = apiKey.Group.DefaultMappedModel
 				}
 				if defaultModel != "" && defaultModel != reqModel {
