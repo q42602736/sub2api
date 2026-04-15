@@ -212,6 +212,7 @@ export interface OpsRequestDetail {
   actual_cost?: number | null
   rate_multiplier?: number | null
   account_rate_multiplier?: number | null
+  account_stats_cost?: number | null
   billing_type?: number | null
   billing_mode?: string | null
   first_token_ms?: number | null
