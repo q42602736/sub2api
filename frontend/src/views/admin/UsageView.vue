@@ -498,21 +498,24 @@ const exportToExcel = async () => {
     while (true) {
       const res = await adminAPI.ops.listRequestDetails(buildRequestListParams(p, 100), { signal: c.signal })
       if (c.signal.aborted) break; if (p === 1) { total = res.total; exportProgress.total = total }
-      const rows = (res.items || []).map((log: OpsRequestDetail) => [
-        log.created_at, log.user_email || '', log.api_key_name || '', log.account_name || '',
-        log.kind === 'error' ? t('admin.ops.requestDetails.kind.error') : t('admin.ops.requestDetails.kind.success'),
-        log.status_code ?? 200,
-        log.model, log.upstream_model || '', formatReasoningEffort(log.reasoning_effort), log.group_name || '',
-        log.inbound_endpoint || '', log.upstream_endpoint || '', getRequestTypeLabel(log),
-        log.input_tokens ?? '', log.output_tokens ?? '', log.cache_read_tokens ?? '', log.cache_creation_tokens ?? '',
-        log.input_cost?.toFixed(6) || '', log.output_cost?.toFixed(6) || '',
-        log.cache_read_cost?.toFixed(6) || '', log.cache_creation_cost?.toFixed(6) || '',
-        log.rate_multiplier?.toPrecision(4) || '', log.account_rate_multiplier?.toPrecision(4) || '',
-        log.total_cost?.toFixed(6) || '', log.actual_cost?.toFixed(6) || '',
-        log.total_cost != null && log.account_rate_multiplier != null ? (log.total_cost * log.account_rate_multiplier).toFixed(6) : '',
-        log.first_token_ms ?? '', log.duration_ms,
-        log.request_id || '', log.user_agent || '', log.ip_address || ''
-      ])
+      const rows = (res.items || []).map((log: OpsRequestDetail) => {
+        const accountBaseCost = log.account_stats_cost ?? log.total_cost
+        return [
+          log.created_at, log.user_email || '', log.api_key_name || '', log.account_name || '',
+          log.kind === 'error' ? t('admin.ops.requestDetails.kind.error') : t('admin.ops.requestDetails.kind.success'),
+          log.status_code ?? 200,
+          log.model, log.upstream_model || '', formatReasoningEffort(log.reasoning_effort), log.group_name || '',
+          log.inbound_endpoint || '', log.upstream_endpoint || '', getRequestTypeLabel(log),
+          log.input_tokens ?? '', log.output_tokens ?? '', log.cache_read_tokens ?? '', log.cache_creation_tokens ?? '',
+          log.input_cost?.toFixed(6) || '', log.output_cost?.toFixed(6) || '',
+          log.cache_read_cost?.toFixed(6) || '', log.cache_creation_cost?.toFixed(6) || '',
+          log.rate_multiplier?.toPrecision(4) || '', log.account_rate_multiplier?.toPrecision(4) || '',
+          log.total_cost?.toFixed(6) || '', log.actual_cost?.toFixed(6) || '',
+          accountBaseCost != null && log.account_rate_multiplier != null ? (accountBaseCost * log.account_rate_multiplier).toFixed(6) : '',
+          log.first_token_ms ?? '', log.duration_ms,
+          log.request_id || '', log.user_agent || '', log.ip_address || ''
+        ]
+      })
       if (rows.length) {
         XLSX.utils.sheet_add_aoa(ws, rows, { origin: -1 })
       }
