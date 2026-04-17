@@ -167,6 +167,7 @@ const (
 	SettingKeyFallbackModelAntigravity       = "fallback_model_antigravity"
 	SettingKeyOpenAIOverLimitModeEnabled     = "openai_over_limit_mode_enabled"
 	SettingKeyOpenAIOverLimitCooldownSeconds = "openai_over_limit_cooldown_seconds"
+	SettingKeyOpenAIOverLimitParallelEnabled = "openai_over_limit_parallel_enabled"
 
 	// Request identity patch (Claude -> Gemini systemInstruction injection)
 	SettingKeyEnableIdentityPatch = "enable_identity_patch"

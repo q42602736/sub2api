@@ -349,8 +349,9 @@ type OpenAIGatewayService struct {
 }
 
 type openAIOverLimitModeSettings struct {
-	enabled  bool
-	cooldown time.Duration
+	enabled         bool
+	cooldown        time.Duration
+	parallelEnabled bool
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
@@ -421,14 +422,15 @@ func (s *OpenAIGatewayService) getOpenAIOverLimitModeSettings(ctx context.Contex
 	if s == nil || s.settingService == nil {
 		return openAIOverLimitModeSettings{}
 	}
-	enabled, cooldownSeconds, err := s.settingService.GetOpenAIOverLimitModeSettings(ctx)
+	enabled, cooldownSeconds, parallelEnabled, err := s.settingService.GetOpenAIOverLimitModeSettings(ctx)
 	if err != nil {
 		slog.Warn("load openai over-limit settings failed", "error", err)
 		return openAIOverLimitModeSettings{}
 	}
 	return openAIOverLimitModeSettings{
-		enabled:  enabled,
-		cooldown: time.Duration(cooldownSeconds) * time.Second,
+		enabled:         enabled,
+		cooldown:        time.Duration(cooldownSeconds) * time.Second,
+		parallelEnabled: parallelEnabled,
 	}
 }
 
@@ -1452,6 +1454,11 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 // selectBestAccount selects the best account from candidates (priority + LRU).
 // Returns nil if no available account.
 func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *int64, accounts []Account, requestedModel string, excludedIDs map[int64]struct{}) *Account {
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if settings.enabled && settings.parallelEnabled {
+		return s.selectRandomAccountWithinTopPriority(ctx, groupID, accounts, requestedModel, excludedIDs)
+	}
+
 	var selected *Account
 	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
 
@@ -1489,6 +1496,49 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	}
 
 	return selected
+}
+
+func (s *OpenAIGatewayService) selectRandomAccountWithinTopPriority(ctx context.Context, groupID *int64, accounts []Account, requestedModel string, excludedIDs map[int64]struct{}) *Account {
+	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
+	candidates := make([]*Account, 0, len(accounts))
+	topPriority := 0
+	hasTopPriority := false
+
+	for i := range accounts {
+		acc := &accounts[i]
+		if _, excluded := excludedIDs[acc.ID]; excluded {
+			continue
+		}
+
+		fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, requestedModel)
+		if fresh == nil {
+			continue
+		}
+		fresh = s.recheckSelectedOpenAIAccountFromDB(ctx, fresh, requestedModel)
+		if fresh == nil {
+			continue
+		}
+		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel) {
+			continue
+		}
+
+		if !hasTopPriority || fresh.Priority < topPriority {
+			topPriority = fresh.Priority
+			hasTopPriority = true
+			candidates = candidates[:0]
+		}
+		if fresh.Priority == topPriority {
+			candidates = append(candidates, fresh)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+	return candidates[rand.Intn(len(candidates))]
 }
 
 // isBetterAccount 判断 candidate 是否比 current 更优。

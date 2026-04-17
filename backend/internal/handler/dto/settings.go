@@ -101,6 +101,7 @@ type SystemSettings struct {
 	FallbackModelAntigravity       string `json:"fallback_model_antigravity"`
 	OpenAIOverLimitModeEnabled     bool   `json:"openai_over_limit_mode_enabled"`
 	OpenAIOverLimitCooldownSeconds int    `json:"openai_over_limit_cooldown_seconds"`
+	OpenAIOverLimitParallelEnabled bool   `json:"openai_over_limit_parallel_enabled"`
 
 	// Identity patch configuration (Claude -> Gemini)
 	EnableIdentityPatch bool   `json:"enable_identity_patch"`

@@ -4579,7 +4579,9 @@ export default {
         openaiOverLimitMode: 'OpenAI 超限模式',
         openaiOverLimitModeHint: '开启后，OpenAI 的 /v1/responses、/v1/messages、/v1/chat/completions 在遇到 429 账号时只做短冷却，不再一直跳过到真实 reset 时间，允许后续重新参与调度以复用上游缓存。',
         openaiOverLimitCooldown: '超限冷却秒数',
-        openaiOverLimitCooldownHint: '429 后进入短冷却的秒数。超出冷却窗口后，已被上游标记限流的 OpenAI 账号会重新进入调度候选。范围 1-600 秒。'
+        openaiOverLimitCooldownHint: '429 后进入短冷却的秒数。超出冷却窗口后，已被上游标记限流的 OpenAI 账号会重新进入调度候选。范围 1-600 秒。',
+        openaiOverLimitParallel: '超限并行模式',
+        openaiOverLimitParallelHint: '开启后，在超限模式下同优先级的 OpenAI 账号会随机选择一个发起请求；不同优先级仍然优先选择更高优先级账号。'
       },
       gatewayForwarding: {
         title: '请求转发行为',

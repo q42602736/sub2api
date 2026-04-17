@@ -94,6 +94,7 @@ export interface SystemSettings {
   fallback_model_antigravity: string
   openai_over_limit_mode_enabled: boolean
   openai_over_limit_cooldown_seconds: number
+  openai_over_limit_parallel_enabled: boolean
 
   // Identity patch configuration (Claude -> Gemini)
   enable_identity_patch: boolean
@@ -216,6 +217,7 @@ export interface UpdateSettingsRequest {
   fallback_model_antigravity?: string
   openai_over_limit_mode_enabled?: boolean
   openai_over_limit_cooldown_seconds?: number
+  openai_over_limit_parallel_enabled?: boolean
   enable_identity_patch?: boolean
   identity_patch_prompt?: string
   ops_monitoring_enabled?: boolean

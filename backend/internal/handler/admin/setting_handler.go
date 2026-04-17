@@ -163,6 +163,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		FallbackModelAntigravity:             settings.FallbackModelAntigravity,
 		OpenAIOverLimitModeEnabled:           settings.OpenAIOverLimitModeEnabled,
 		OpenAIOverLimitCooldownSeconds:       settings.OpenAIOverLimitCooldownSeconds,
+		OpenAIOverLimitParallelEnabled:       settings.OpenAIOverLimitParallelEnabled,
 		EnableIdentityPatch:                  settings.EnableIdentityPatch,
 		IdentityPatchPrompt:                  settings.IdentityPatchPrompt,
 		OpsMonitoringEnabled:                 opsEnabled && settings.OpsMonitoringEnabled,
@@ -290,6 +291,7 @@ type UpdateSettingsRequest struct {
 	FallbackModelAntigravity       string `json:"fallback_model_antigravity"`
 	OpenAIOverLimitModeEnabled     bool   `json:"openai_over_limit_mode_enabled"`
 	OpenAIOverLimitCooldownSeconds int    `json:"openai_over_limit_cooldown_seconds"`
+	OpenAIOverLimitParallelEnabled bool   `json:"openai_over_limit_parallel_enabled"`
 
 	// Identity patch configuration (Claude -> Gemini)
 	EnableIdentityPatch bool   `json:"enable_identity_patch"`
@@ -855,6 +857,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FallbackModelAntigravity:         req.FallbackModelAntigravity,
 		OpenAIOverLimitModeEnabled:       req.OpenAIOverLimitModeEnabled,
 		OpenAIOverLimitCooldownSeconds:   req.OpenAIOverLimitCooldownSeconds,
+		OpenAIOverLimitParallelEnabled:   req.OpenAIOverLimitParallelEnabled,
 		EnableIdentityPatch:              req.EnableIdentityPatch,
 		IdentityPatchPrompt:              req.IdentityPatchPrompt,
 		MinClaudeCodeVersion:             req.MinClaudeCodeVersion,
@@ -1332,6 +1335,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.OpenAIOverLimitCooldownSeconds != after.OpenAIOverLimitCooldownSeconds {
 		changed = append(changed, "openai_over_limit_cooldown_seconds")
+	}
+	if before.OpenAIOverLimitParallelEnabled != after.OpenAIOverLimitParallelEnabled {
+		changed = append(changed, "openai_over_limit_parallel_enabled")
 	}
 	if before.EnableIdentityPatch != after.EnableIdentityPatch {
 		changed = append(changed, "enable_identity_patch")

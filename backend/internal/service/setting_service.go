@@ -97,6 +97,7 @@ const gatewayForwardingDBTimeout = 5 * time.Second
 type cachedOpenAIOverLimitSettings struct {
 	enabled         bool
 	cooldownSeconds int
+	parallelEnabled bool
 	expiresAt       int64 // unix nano
 }
 
@@ -614,6 +615,7 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 	updates[SettingKeyFallbackModelAntigravity] = settings.FallbackModelAntigravity
 	updates[SettingKeyOpenAIOverLimitModeEnabled] = strconv.FormatBool(settings.OpenAIOverLimitModeEnabled)
 	updates[SettingKeyOpenAIOverLimitCooldownSeconds] = strconv.Itoa(normalizeOpenAIOverLimitCooldownSeconds(settings.OpenAIOverLimitCooldownSeconds))
+	updates[SettingKeyOpenAIOverLimitParallelEnabled] = strconv.FormatBool(settings.OpenAIOverLimitParallelEnabled)
 
 	// Identity patch configuration (Claude -> Gemini)
 	updates[SettingKeyEnableIdentityPatch] = strconv.FormatBool(settings.EnableIdentityPatch)
@@ -674,6 +676,7 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 		openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitSettings{
 			enabled:         settings.OpenAIOverLimitModeEnabled,
 			cooldownSeconds: normalizeOpenAIOverLimitCooldownSeconds(settings.OpenAIOverLimitCooldownSeconds),
+			parallelEnabled: settings.OpenAIOverLimitParallelEnabled,
 			expiresAt:       time.Now().Add(openAIOverLimitSettingsCacheTTL).UnixNano(),
 		})
 		if s.onUpdate != nil {
@@ -981,6 +984,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyFallbackModelAntigravity:       "gemini-2.5-pro",
 		SettingKeyOpenAIOverLimitModeEnabled:     "false",
 		SettingKeyOpenAIOverLimitCooldownSeconds: "15",
+		SettingKeyOpenAIOverLimitParallelEnabled: "false",
 		// Identity patch defaults
 		SettingKeyEnableIdentityPatch: "true",
 		SettingKeyIdentityPatchPrompt: "",
@@ -1239,6 +1243,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.FallbackModelAntigravity = s.getStringOrDefault(settings, SettingKeyFallbackModelAntigravity, "gemini-2.5-pro")
 	result.OpenAIOverLimitModeEnabled = settings[SettingKeyOpenAIOverLimitModeEnabled] == "true"
 	result.OpenAIOverLimitCooldownSeconds = normalizeOpenAIOverLimitCooldownSeconds(parseIntOrDefault(settings[SettingKeyOpenAIOverLimitCooldownSeconds], 15))
+	result.OpenAIOverLimitParallelEnabled = settings[SettingKeyOpenAIOverLimitParallelEnabled] == "true"
 
 	// Identity patch settings (default: enabled, to preserve existing behavior)
 	if v, ok := settings[SettingKeyEnableIdentityPatch]; ok && v != "" {
@@ -1412,10 +1417,10 @@ func normalizeOpenAIOverLimitCooldownSeconds(value int) int {
 	return value
 }
 
-func (s *SettingService) GetOpenAIOverLimitModeSettings(ctx context.Context) (bool, int, error) {
+func (s *SettingService) GetOpenAIOverLimitModeSettings(ctx context.Context) (bool, int, bool, error) {
 	nowUnix := time.Now().UnixNano()
 	if cached, ok := openAIOverLimitSettingsCache.Load().(*cachedOpenAIOverLimitSettings); ok && cached != nil && cached.expiresAt > nowUnix {
-		return cached.enabled, cached.cooldownSeconds, nil
+		return cached.enabled, cached.cooldownSeconds, cached.parallelEnabled, nil
 	}
 
 	value, err, _ := openAIOverLimitSettingsSF.Do("openai_over_limit_settings", func() (any, error) {
@@ -1425,11 +1430,13 @@ func (s *SettingService) GetOpenAIOverLimitModeSettings(ctx context.Context) (bo
 		values, readErr := s.settingRepo.GetMultiple(readCtx, []string{
 			SettingKeyOpenAIOverLimitModeEnabled,
 			SettingKeyOpenAIOverLimitCooldownSeconds,
+			SettingKeyOpenAIOverLimitParallelEnabled,
 		})
 		if readErr != nil {
 			openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitSettings{
 				enabled:         false,
 				cooldownSeconds: 15,
+				parallelEnabled: false,
 				expiresAt:       time.Now().Add(openAIOverLimitSettingsErrorTTL).UnixNano(),
 			})
 			return nil, readErr
@@ -1437,25 +1444,28 @@ func (s *SettingService) GetOpenAIOverLimitModeSettings(ctx context.Context) (bo
 
 		enabled := values[SettingKeyOpenAIOverLimitModeEnabled] == "true"
 		cooldownSeconds := normalizeOpenAIOverLimitCooldownSeconds(parseIntOrDefault(values[SettingKeyOpenAIOverLimitCooldownSeconds], 15))
+		parallelEnabled := values[SettingKeyOpenAIOverLimitParallelEnabled] == "true"
 		openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitSettings{
 			enabled:         enabled,
 			cooldownSeconds: cooldownSeconds,
+			parallelEnabled: parallelEnabled,
 			expiresAt:       time.Now().Add(openAIOverLimitSettingsCacheTTL).UnixNano(),
 		})
 		return &cachedOpenAIOverLimitSettings{
 			enabled:         enabled,
 			cooldownSeconds: cooldownSeconds,
+			parallelEnabled: parallelEnabled,
 		}, nil
 	})
 	if err != nil {
-		return false, 15, err
+		return false, 15, false, err
 	}
 
 	resolved, _ := value.(*cachedOpenAIOverLimitSettings)
 	if resolved == nil {
-		return false, 15, nil
+		return false, 15, false, nil
 	}
-	return resolved.enabled, resolved.cooldownSeconds, nil
+	return resolved.enabled, resolved.cooldownSeconds, resolved.parallelEnabled, nil
 }
 
 // IsTurnstileEnabled 检查是否启用 Turnstile 验证

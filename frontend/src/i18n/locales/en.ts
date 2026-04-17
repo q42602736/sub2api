@@ -4417,7 +4417,9 @@ export default {
         openaiOverLimitMode: 'OpenAI Over-Limit Mode',
         openaiOverLimitModeHint: 'When enabled, OpenAI /v1/responses, /v1/messages, and /v1/chat/completions accounts that hit 429 enter only a short cooldown instead of being skipped until the real upstream reset time. This allows them to rejoin scheduling and potentially reuse upstream cache later.',
         openaiOverLimitCooldown: 'Over-Limit Cooldown (seconds)',
-        openaiOverLimitCooldownHint: 'Short cooldown applied after a 429 response. Once the cooldown expires, OpenAI accounts still marked as rate-limited upstream may re-enter the scheduler candidate set. Range: 1-600 seconds.'
+        openaiOverLimitCooldownHint: 'Short cooldown applied after a 429 response. Once the cooldown expires, OpenAI accounts still marked as rate-limited upstream may re-enter the scheduler candidate set. Range: 1-600 seconds.',
+        openaiOverLimitParallel: 'Over-Limit Parallel Mode',
+        openaiOverLimitParallelHint: 'When enabled, same-priority OpenAI accounts are randomly selected under over-limit mode. Different priorities still prefer the higher-priority accounts first.'
       },
       gatewayForwarding: {
         title: 'Request Forwarding',

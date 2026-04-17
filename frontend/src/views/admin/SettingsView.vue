@@ -1680,6 +1680,17 @@
                 {{ t('admin.settings.scheduling.openaiOverLimitCooldownHint') }}
               </p>
             </div>
+            <div class="mt-6 flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.scheduling.openaiOverLimitParallel') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.scheduling.openaiOverLimitParallelHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.openai_over_limit_parallel_enabled" />
+            </div>
           </div>
         </div>
 
@@ -3063,6 +3074,7 @@ const form = reactive<SettingsForm>({
   fallback_model_antigravity: 'gemini-2.5-pro',
   openai_over_limit_mode_enabled: false,
   openai_over_limit_cooldown_seconds: 15,
+  openai_over_limit_parallel_enabled: false,
   // Identity patch (Claude -> Gemini)
   enable_identity_patch: true,
   identity_patch_prompt: '',
@@ -3653,6 +3665,7 @@ async function saveSettings() {
       fallback_model_antigravity: form.fallback_model_antigravity,
       openai_over_limit_mode_enabled: form.openai_over_limit_mode_enabled,
       openai_over_limit_cooldown_seconds: Number(form.openai_over_limit_cooldown_seconds) || 15,
+      openai_over_limit_parallel_enabled: form.openai_over_limit_parallel_enabled,
       enable_identity_patch: form.enable_identity_patch,
       identity_patch_prompt: form.identity_patch_prompt,
       min_claude_code_version: form.min_claude_code_version,
