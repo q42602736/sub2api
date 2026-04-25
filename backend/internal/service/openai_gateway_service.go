@@ -1381,10 +1381,14 @@ func openAICompactSupportTier(account *Account) int {
 	return 0
 }
 
-// isOpenAIAccountEligibleForRequest centralises the schedulable / OpenAI / model /
-// compact-support checks used during account selection.
+// isOpenAIAccountEligibleForRequest centralises the OpenAI / model / compact-support
+// checks used during account selection.
+//
+// 注意：不要在这里调用 account.IsSchedulable()。
+// 超限模式下，RateLimitResetAt 仍在未来的账号会通过 isOpenAIAccountSelectable
+// 走“短冷却后重新入候选”的逻辑；若这里再复用 IsSchedulable，会把 429 账号再次排除掉。
 func isOpenAIAccountEligibleForRequest(account *Account, requestedModel string, requireCompact bool) bool {
-	if account == nil || !account.IsSchedulable() || !account.IsOpenAI() {
+	if account == nil || !account.IsOpenAI() {
 		return false
 	}
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
