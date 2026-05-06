@@ -848,6 +848,8 @@ export default {
     perMillionTokens: '/ 1M Token',
     unitPrice: '单次价格',
     imageUnitPrice: '单张价格',
+    imageTotalPrice: '图片总价',
+    imageCount: '图片张数',
     cacheRead: '读取',
     cacheWrite: '写入',
     serviceTier: '服务档位',
@@ -2133,7 +2135,13 @@ export default {
       },
       imagePricing: {
         title: '图片生成计费',
-        description: '配置图片生成模型的图片生成价格，留空则使用默认价格'
+        description: '配置图片生成能力和图片基础单价，留空则使用默认价格',
+        allowImageGeneration: '允许当前分组生图',
+        independentMultiplier: '生图倍率独立',
+        imageMultiplier: '生图独立倍率',
+        modeHint: '默认关闭独立倍率时，图片费用 = 图片价格 × 当前分组有效倍率；开启独立倍率后，图片费用 = 图片价格 × 生图独立倍率。',
+        finalPricePreview: '最终单张价格预览',
+        notConfigured: '未配置'
       },
       claudeCode: {
         title: 'Claude Code 客户端限制',
@@ -5700,6 +5708,16 @@ export default {
         cooldownMinutesHint: '账号暂停调度的持续时间（1-120 分钟）',
         saved: '过载冷却设置保存成功',
         saveFailed: '保存过载冷却设置失败'
+      },
+      rateLimit429Cooldown: {
+        title: '429 默认回避',
+        description: '配置上游返回 429 且没有明确重置时间时的默认账号回避策略',
+        enabled: '启用 429 默认回避',
+        enabledHint: '收到无重置时间的 429 时暂停该账号调度，冷却后自动恢复',
+        cooldownSeconds: '回避时长（秒）',
+        cooldownSecondsHint: '默认回避持续时间（1-7200 秒）；上游返回明确 reset 时仍优先使用上游时间',
+        saved: '429 默认回避设置保存成功',
+        saveFailed: '保存 429 默认回避设置失败'
       },
       streamTimeout: {
         title: '流超时处理',
