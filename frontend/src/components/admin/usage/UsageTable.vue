@@ -394,7 +394,7 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
 function imageUnitPrice(row: AdminUsageRecord | null): number {
   const imageCount = row?.image_count ?? 0
   if (imageCount <= 0) return 0
-  const total = row.total_cost ?? 0
+  const total = row?.total_cost ?? 0
   const price = total / imageCount
   return Number.isFinite(price) ? price : 0
 }
