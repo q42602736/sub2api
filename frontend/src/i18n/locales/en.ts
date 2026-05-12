@@ -3424,6 +3424,8 @@ export default {
         generateAuthUrl: 'Generate Auth URL',
         generating: 'Generating...',
         regenerate: 'Regenerate',
+        openAuthUrl: 'Open in default browser',
+        openAuthUrlBlocked: 'The browser blocked the new window. Allow pop-ups and try again.',
         step2OpenUrl: 'Open the URL in your browser and complete authorization',
         openUrlDesc:
           'Open the authorization URL in a new tab, log in to your Claude account and authorize.',
@@ -3451,6 +3453,7 @@ export default {
           followSteps: 'Follow these steps to complete OpenAI account authorization:',
           step1GenerateUrl: 'Click the button below to generate the authorization URL',
           generateAuthUrl: 'Generate Auth URL',
+          openAuthUrl: 'Open in default browser',
           step2OpenUrl: 'Open the URL in your browser and complete authorization',
           openUrlDesc:
             'Open the authorization URL in a new tab, log in to your OpenAI account and authorize.',
@@ -3508,6 +3511,7 @@ export default {
 	          followSteps: 'Follow these steps to authorize your Gemini account:',
 	          step1GenerateUrl: 'Generate the authorization URL',
 	          generateAuthUrl: 'Generate Auth URL',
+	          openAuthUrl: 'Open in default browser',
 	          projectIdLabel: 'Project ID (optional)',
 	          projectIdPlaceholder: 'e.g. my-gcp-project or cloud-ai-companion-xxxxx',
 	          projectIdHint:
@@ -3557,6 +3561,7 @@ export default {
           followSteps: 'Follow these steps to authorize your Antigravity account:',
           step1GenerateUrl: 'Generate the authorization URL',
           generateAuthUrl: 'Generate Auth URL',
+          openAuthUrl: 'Open in default browser',
           step2OpenUrl: 'Open the URL in your browser and complete authorization',
           openUrlDesc: 'Open the authorization URL in a new tab, log in to your Google account and authorize.',
           importantNotice:

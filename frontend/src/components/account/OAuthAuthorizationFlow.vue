@@ -476,7 +476,7 @@
                     <button
                       type="button"
                       class="btn btn-secondary p-2"
-                      title="Copy URL"
+                      :title="t('common.copy')"
                       @click="handleCopyUrl"
                     >
                       <svg
@@ -500,6 +500,15 @@
                         class="text-green-500"
                         :stroke-width="2"
                       />
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-primary whitespace-nowrap text-sm"
+                      :title="oauthOpenAuthUrl"
+                      @click="handleOpenAuthUrl"
+                    >
+                      <Icon name="externalLink" size="sm" class="mr-2" :stroke-width="2" />
+                      {{ oauthOpenAuthUrl }}
                     </button>
                   </div>
                   <button
@@ -632,6 +641,7 @@
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useClipboard } from '@/composables/useClipboard'
+import { useAppStore } from '@/stores/app'
 import Icon from '@/components/icons/Icon.vue'
 import type { AddMethod, AuthInputMethod } from '@/composables/useAccountOAuth'
 import type { AccountPlatform } from '@/types'
@@ -688,6 +698,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const appStore = useAppStore()
 
 const isOpenAI = computed(() => props.platform === 'openai')
 
@@ -706,6 +717,7 @@ const oauthStep1GenerateUrl = computed(() => t(getOAuthKey('step1GenerateUrl')))
 const oauthGenerateAuthUrl = computed(() => t(getOAuthKey('generateAuthUrl')))
 const oauthStep2OpenUrl = computed(() => t(getOAuthKey('step2OpenUrl')))
 const oauthOpenUrlDesc = computed(() => t(getOAuthKey('openUrlDesc')))
+const oauthOpenAuthUrl = computed(() => t(getOAuthKey('openAuthUrl'), '使用默认浏览器打开'))
 const oauthStep3EnterCode = computed(() => t(getOAuthKey('step3EnterCode')))
 const oauthAuthCodeDesc = computed(() => t(getOAuthKey('authCodeDesc')))
 const oauthAuthCode = computed(() => t(getOAuthKey('authCode')))
@@ -808,6 +820,18 @@ const handleCopyUrl = () => {
   if (props.authUrl) {
     copyToClipboard(props.authUrl, 'URL copied to clipboard')
   }
+}
+
+const handleOpenAuthUrl = () => {
+  if (!props.authUrl) return
+
+  const popup = window.open(props.authUrl, '_blank')
+  if (!popup) {
+    appStore.showError(t('admin.accounts.oauth.openAuthUrlBlocked', '浏览器拦截了新窗口，请允许弹窗后重试。'))
+    return
+  }
+
+  popup.opener = null
 }
 
 const handleRegenerate = () => {

@@ -3564,6 +3564,8 @@ export default {
         generateAuthUrl: '生成授权 URL',
         generating: '生成中...',
         regenerate: '重新生成',
+        openAuthUrl: '使用默认浏览器打开',
+        openAuthUrlBlocked: '浏览器拦截了新窗口，请允许弹窗后重试。',
         step2OpenUrl: '在浏览器中打开 URL 并完成授权',
         openUrlDesc: '在新标签页中打开授权 URL，登录您的 Claude 账号并授权。',
         proxyWarning: '注意：如果您配置了代理，请确保浏览器使用相同的代理访问授权页面。',
@@ -3588,6 +3590,7 @@ export default {
           followSteps: '请按照以下步骤完成 OpenAI 账户的授权：',
           step1GenerateUrl: '点击下方按钮生成授权链接',
           generateAuthUrl: '生成授权链接',
+          openAuthUrl: '使用默认浏览器打开',
           step2OpenUrl: '在浏览器中打开链接并完成授权',
           openUrlDesc: '请在新标签页中打开授权链接，登录您的 OpenAI 账户并授权。',
           importantNotice:
@@ -3643,6 +3646,7 @@ export default {
           followSteps: '请按照以下步骤完成 Gemini 账户的授权：',
           step1GenerateUrl: '生成授权链接',
           generateAuthUrl: '生成授权链接',
+          openAuthUrl: '使用默认浏览器打开',
           projectIdLabel: 'Project ID（可选）',
           projectIdPlaceholder: '例如：my-gcp-project 或 cloud-ai-companion-xxxxx',
           projectIdHint:
@@ -3688,6 +3692,7 @@ export default {
           followSteps: '请按照以下步骤完成 Antigravity 账户的授权：',
           step1GenerateUrl: '生成授权链接',
           generateAuthUrl: '生成授权链接',
+          openAuthUrl: '使用默认浏览器打开',
           step2OpenUrl: '在浏览器中打开链接并完成授权',
           openUrlDesc: '请在新标签页中打开授权链接，登录您的 Google 账户并授权。',
           importantNotice:
