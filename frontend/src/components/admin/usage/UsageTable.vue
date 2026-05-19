@@ -332,13 +332,13 @@
               </div>
             </template>
             <template v-else-if="!tooltipData?.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN">
-              <div v-if="tooltipData && tooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
+              <div v-if="(tooltipData?.input_tokens ?? 0) > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.inputTokenPrice') }}</span>
-                <span class="font-medium text-sky-300">{{ formatTokenPricePerMillion(tooltipData.input_cost, tooltipData.input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-medium text-sky-300">{{ formatTokenPricePerMillion(tooltipData?.input_cost ?? 0, tooltipData?.input_tokens ?? 0) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && tooltipData.output_tokens > 0" class="flex items-center justify-between gap-4">
+              <div v-if="(tooltipData?.output_tokens ?? 0) > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.outputTokenPrice') }}</span>
-                <span class="font-medium text-violet-300">{{ formatTokenPricePerMillion(tooltipData.output_cost, tooltipData.output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-medium text-violet-300">{{ formatTokenPricePerMillion(tooltipData?.output_cost ?? 0, tooltipData?.output_tokens ?? 0) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
             </template>
             <div v-else class="flex items-center justify-between gap-4">
@@ -425,11 +425,11 @@ function imageUnitPrice(row: AdminUsageRecord | null): number {
   return Number.isFinite(price) ? price : 0
 }
 
-function isImageUsage(row: Pick<AdminUsageLog, 'image_count'> | null | undefined): boolean {
+function isImageUsage(row: Pick<AdminUsageRecord, 'image_count'> | null | undefined): boolean {
   return (row?.image_count ?? 0) > 0
 }
 
-function getDisplayBillingMode(row: Pick<AdminUsageLog, 'billing_mode' | 'image_count'> | null | undefined): string | null | undefined {
+function getDisplayBillingMode(row: Pick<AdminUsageRecord, 'billing_mode' | 'image_count'> | null | undefined): string | null | undefined {
   if (isImageUsage(row)) {
     return BILLING_MODE_IMAGE
   }

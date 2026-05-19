@@ -6,7 +6,7 @@ const knownImageSizeSources = new Set(['output', 'input', 'default', 'legacy'])
 const knownImageBillingSizes = new Set(['1K', '2K', '4K', 'mixed'])
 
 type ImageUsageRow = Pick<
-  UsageLog,
+  Partial<UsageLog>,
   'image_size' | 'image_input_size' | 'image_output_size' | 'image_size_source' | 'image_size_breakdown'
 >
 

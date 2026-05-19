@@ -218,6 +218,10 @@ export interface OpsRequestDetail {
   first_token_ms?: number | null
   image_count?: number | null
   image_size?: string | null
+  image_input_size?: string | null
+  image_output_size?: string | null
+  image_size_source?: string | null
+  image_size_breakdown?: Record<string, number> | null
   user_agent?: string | null
   ip_address?: string | null
   cache_ttl_overridden?: boolean | null
