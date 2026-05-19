@@ -5,7 +5,7 @@
  */
 
 import { apiClient } from '../client'
-import type { PaginatedResponse } from '@/types'
+import type { ImageSizeSource, PaginatedResponse } from '@/types'
 
 export type OpsRetryMode = 'client' | 'upstream'
 export type OpsQueryMode = 'auto' | 'raw' | 'preagg'
@@ -220,7 +220,7 @@ export interface OpsRequestDetail {
   image_size?: string | null
   image_input_size?: string | null
   image_output_size?: string | null
-  image_size_source?: string | null
+  image_size_source?: ImageSizeSource | null
   image_size_breakdown?: Record<string, number> | null
   user_agent?: string | null
   ip_address?: string | null
