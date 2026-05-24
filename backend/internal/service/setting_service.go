@@ -3399,6 +3399,14 @@ func (s *SettingService) getStringOrDefault(settings map[string]string, key, def
 	return defaultValue
 }
 
+func parseIntOrDefault(raw string, defaultValue int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
 func normalizeOpenAIOverLimitCooldownSeconds(value int) int {
 	if value < 1 {
 		return 15
