@@ -10,7 +10,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-DEPLOY_DIR="${DEPLOY_DIR:-/Users/caolin/Desktop/projects/sub2api-deploy}"
+if [ -z "${DEPLOY_DIR:-}" ]; then
+  if [ -d /root/sub2api-deploy ]; then
+    DEPLOY_DIR="/root/sub2api-deploy"
+  else
+    DEPLOY_DIR="/Users/caolin/Desktop/projects/sub2api-deploy"
+  fi
+fi
 COMPOSE_FILE="${COMPOSE_FILE:-${DEPLOY_DIR}/docker-compose.local.yml}"
 ENV_FILE="${ENV_FILE:-${DEPLOY_DIR}/.env}"
 IMAGE_TAG="${IMAGE_TAG:-sub2api:local}"
