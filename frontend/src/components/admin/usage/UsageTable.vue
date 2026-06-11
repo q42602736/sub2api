@@ -13,24 +13,27 @@
         <template #cell-user="{ row }">
           <div class="text-sm">
             <button
-              v-if="row.user_email"
+              v-if="displayUserEmail(row)"
               class="font-medium text-primary-600 underline decoration-dashed underline-offset-2 transition-colors hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-              @click="row.user_id ? $emit('userClick', row.user_id, row.user_email) : undefined"
+              @click="row.user_id ? $emit('userClick', row.user_id, displayUserEmail(row)) : undefined"
               :title="t('admin.usage.clickToViewBalance')"
             >
-              {{ row.user_email }}
+              {{ displayUserEmail(row) }}
             </button>
             <span v-else class="font-medium text-gray-900 dark:text-white">-</span>
+            <span v-if="row.user?.deleted_at" class="ml-1 inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/20 dark:text-rose-400 dark:ring-rose-500/30">
+              {{ t('admin.usage.userDeletedBadge') }}
+            </span>
             <span v-if="row.user_id" class="ml-1 text-gray-500 dark:text-gray-400">#{{ row.user_id }}</span>
           </div>
         </template>
 
         <template #cell-api_key="{ row }">
-          <span class="text-sm text-gray-900 dark:text-white">{{ row.api_key_name || '-' }}</span>
+          <span class="text-sm text-gray-900 dark:text-white">{{ displayApiKeyName(row) || '-' }}</span>
         </template>
 
         <template #cell-account="{ row }">
-          <span class="text-sm text-gray-900 dark:text-white">{{ row.account_name || '-' }}</span>
+          <span class="text-sm text-gray-900 dark:text-white">{{ displayAccountName(row) || '-' }}</span>
         </template>
 
         <template #cell-result="{ row }">
@@ -86,8 +89,8 @@
         </template>
 
         <template #cell-group="{ row }">
-          <span v-if="row.group_name" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
-            {{ row.group_name }}
+          <span v-if="displayGroupName(row)" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+            {{ displayGroupName(row) }}
           </span>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
@@ -139,6 +142,12 @@
                   <span class="font-medium text-amber-600 dark:text-amber-400">{{ formatCacheTokens(row.cache_creation_tokens) }}</span>
                   <span v-if="row.cache_creation_1h_tokens > 0" class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-orange-100 text-orange-600 ring-1 ring-inset ring-orange-200 dark:bg-orange-500/20 dark:text-orange-400 dark:ring-orange-500/30">1h</span>
                   <span v-if="row.cache_ttl_overridden" :title="t('usage.cacheTtlOverriddenHint')" class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/20 dark:text-rose-400 dark:ring-rose-500/30 cursor-help">R</span>
+                </div>
+              </div>
+              <div v-if="hasImageOutputTokens(row)" class="flex items-center gap-2">
+                <div class="inline-flex items-center gap-1">
+                  <svg class="h-3.5 w-3.5 text-pink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                  <span class="font-medium text-pink-600 dark:text-pink-400">{{ row.image_output_tokens.toLocaleString() }}</span>
                 </div>
               </div>
             </div>
@@ -219,48 +228,56 @@
         <div class="space-y-1.5">
           <div>
             <div class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.tokenDetails') }}</div>
-            <div v-if="(tokenTooltipData?.input_tokens ?? 0) > 0" class="flex items-center justify-between gap-4">
+            <div v-if="tokenTooltipData && tokenTooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.inputTokens') }}</span>
-              <span class="font-medium text-white">{{ (tokenTooltipData?.input_tokens ?? 0).toLocaleString() }}</span>
+              <span class="font-medium text-white">{{ tokenTooltipData.input_tokens.toLocaleString() }}</span>
             </div>
-            <div v-if="(tokenTooltipData?.output_tokens ?? 0) > 0" class="flex items-center justify-between gap-4">
+            <div v-if="tokenTooltipData && tokenTooltipData.output_tokens > 0 && !hasImageOutputTokens(tokenTooltipData)" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.outputTokens') }}</span>
-              <span class="font-medium text-white">{{ (tokenTooltipData?.output_tokens ?? 0).toLocaleString() }}</span>
+              <span class="font-medium text-white">{{ tokenTooltipData.output_tokens.toLocaleString() }}</span>
             </div>
-            <div v-if="(tokenTooltipData?.cache_creation_tokens ?? 0) > 0">
+            <div v-if="tokenTooltipData && hasImageOutputTokens(tokenTooltipData) && textOutputTokens(tokenTooltipData) > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.outputTokens') }}</span>
+              <span class="font-medium text-white">{{ textOutputTokens(tokenTooltipData).toLocaleString() }}</span>
+            </div>
+            <div v-if="tokenTooltipData && hasImageOutputTokens(tokenTooltipData)" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('usage.imageOutputTokens') }}</span>
+              <span class="font-medium text-pink-300">{{ tokenTooltipData.image_output_tokens.toLocaleString() }}</span>
+            </div>
+            <div v-if="tokenTooltipData && tokenTooltipData.cache_creation_tokens > 0">
               <!-- 有 5m/1h 明细时，展开显示 -->
-              <template v-if="(tokenTooltipData?.cache_creation_5m_tokens ?? 0) > 0 || (tokenTooltipData?.cache_creation_1h_tokens ?? 0) > 0">
-                <div v-if="(tokenTooltipData?.cache_creation_5m_tokens ?? 0) > 0" class="flex items-center justify-between gap-4">
+              <template v-if="tokenTooltipData.cache_creation_5m_tokens > 0 || tokenTooltipData.cache_creation_1h_tokens > 0">
+                <div v-if="tokenTooltipData.cache_creation_5m_tokens > 0" class="flex items-center justify-between gap-4">
                   <span class="text-gray-400 flex items-center gap-1.5">
                     {{ t('admin.usage.cacheCreation5mTokens') }}
                     <span class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-amber-500/20 text-amber-400 ring-1 ring-inset ring-amber-500/30">5m</span>
                   </span>
-                  <span class="font-medium text-white">{{ (tokenTooltipData?.cache_creation_5m_tokens ?? 0).toLocaleString() }}</span>
+                  <span class="font-medium text-white">{{ tokenTooltipData.cache_creation_5m_tokens.toLocaleString() }}</span>
                 </div>
-                <div v-if="(tokenTooltipData?.cache_creation_1h_tokens ?? 0) > 0" class="flex items-center justify-between gap-4">
+                <div v-if="tokenTooltipData.cache_creation_1h_tokens > 0" class="flex items-center justify-between gap-4">
                   <span class="text-gray-400 flex items-center gap-1.5">
                     {{ t('admin.usage.cacheCreation1hTokens') }}
                     <span class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-orange-500/20 text-orange-400 ring-1 ring-inset ring-orange-500/30">1h</span>
                   </span>
-                  <span class="font-medium text-white">{{ (tokenTooltipData?.cache_creation_1h_tokens ?? 0).toLocaleString() }}</span>
+                  <span class="font-medium text-white">{{ tokenTooltipData.cache_creation_1h_tokens.toLocaleString() }}</span>
                 </div>
               </template>
               <!-- 无明细时，只显示聚合值 -->
               <div v-else class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('admin.usage.cacheCreationTokens') }}</span>
-                <span class="font-medium text-white">{{ (tokenTooltipData?.cache_creation_tokens ?? 0).toLocaleString() }}</span>
+                <span class="font-medium text-white">{{ tokenTooltipData.cache_creation_tokens.toLocaleString() }}</span>
               </div>
             </div>
-            <div v-if="tokenTooltipData?.cache_ttl_overridden" class="flex items-center justify-between gap-4">
+            <div v-if="tokenTooltipData && tokenTooltipData.cache_ttl_overridden" class="flex items-center justify-between gap-4">
               <span class="text-gray-400 flex items-center gap-1.5">
                 {{ t('usage.cacheTtlOverriddenLabel') }}
-                <span class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-rose-500/20 text-rose-400 ring-1 ring-inset ring-rose-500/30">R-{{ (tokenTooltipData?.cache_creation_1h_tokens ?? 0) > 0 ? '5m' : '1H' }}</span>
+                <span class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-rose-500/20 text-rose-400 ring-1 ring-inset ring-rose-500/30">R-{{ tokenTooltipData.cache_creation_1h_tokens > 0 ? '5m' : '1H' }}</span>
               </span>
-              <span class="font-medium text-rose-400">{{ (tokenTooltipData?.cache_creation_1h_tokens ?? 0) > 0 ? t('usage.cacheTtlOverridden1h') : t('usage.cacheTtlOverridden5m') }}</span>
+              <span class="font-medium text-rose-400">{{ tokenTooltipData.cache_creation_1h_tokens > 0 ? t('usage.cacheTtlOverridden1h') : t('usage.cacheTtlOverridden5m') }}</span>
             </div>
-            <div v-if="(tokenTooltipData?.cache_read_tokens ?? 0) > 0" class="flex items-center justify-between gap-4">
+            <div v-if="tokenTooltipData && tokenTooltipData.cache_read_tokens > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheReadTokens') }}</span>
-              <span class="font-medium text-white">{{ (tokenTooltipData?.cache_read_tokens ?? 0).toLocaleString() }}</span>
+              <span class="font-medium text-white">{{ tokenTooltipData.cache_read_tokens.toLocaleString() }}</span>
             </div>
           </div>
           <div class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5">
@@ -288,16 +305,34 @@
           <!-- Cost Breakdown -->
           <div class="mb-2 border-b border-gray-700 pb-1.5">
             <div class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.costDetails') }}</div>
-            <div v-if="(tooltipData?.input_cost ?? 0) > 0" class="flex items-center justify-between gap-4">
+            <div v-if="tooltipData && tooltipData.input_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.inputCost') }}</span>
-              <span class="font-medium text-white">${{ (tooltipData?.input_cost ?? 0).toFixed(6) }}</span>
+              <span class="font-medium text-white">${{ tooltipData.input_cost.toFixed(6) }}</span>
             </div>
-            <div v-if="(tooltipData?.output_cost ?? 0) > 0" class="flex items-center justify-between gap-4">
+            <div v-if="tooltipData && tooltipData.output_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.outputCost') }}</span>
-              <span class="font-medium text-white">${{ (tooltipData?.output_cost ?? 0).toFixed(6) }}</span>
+              <span class="font-medium text-white">${{ tooltipData.output_cost.toFixed(6) }}</span>
+            </div>
+            <div v-if="tooltipData && hasImageOutputCost(tooltipData)" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('usage.imageOutputCost') }}</span>
+              <span class="font-medium text-pink-300">${{ tooltipData.image_output_cost.toFixed(6) }}</span>
             </div>
             <!-- Token billing: show unit prices per 1M tokens -->
-            <template v-if="tooltipData && isImageUsage(tooltipData)">
+            <template v-if="!tooltipData?.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN">
+              <div v-if="tooltipData && tooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.inputTokenPrice') }}</span>
+                <span class="font-medium text-sky-300">{{ formatTokenPricePerMillion(tooltipData.input_cost, tooltipData.input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+              <div v-if="tooltipData && tooltipData.output_cost > 0 && textOutputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.outputTokenPrice') }}</span>
+                <span class="font-medium text-violet-300">{{ formatTokenPricePerMillion(tooltipData.output_cost, textOutputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+              <div v-if="tooltipData && hasImageOutputTokens(tooltipData)" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageOutputTokenPrice') }}</span>
+                <span class="font-medium text-pink-300">{{ formatTokenPricePerMillion(tooltipData.image_output_cost ?? 0, tooltipData.image_output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+            </template>
+            <template v-else-if="isImageUsage(tooltipData)">
               <div class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageCount') }}</span>
                 <span class="font-medium text-white">{{ tooltipData.image_count }}{{ t('usage.imageUnit') }}</span>
@@ -331,27 +366,17 @@
                 <span class="font-medium text-white">${{ tooltipData.total_cost?.toFixed(6) || '0.000000' }}</span>
               </div>
             </template>
-            <template v-else-if="!tooltipData?.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN">
-              <div v-if="(tooltipData?.input_tokens ?? 0) > 0" class="flex items-center justify-between gap-4">
-                <span class="text-gray-400">{{ t('usage.inputTokenPrice') }}</span>
-                <span class="font-medium text-sky-300">{{ formatTokenPricePerMillion(tooltipData?.input_cost ?? 0, tooltipData?.input_tokens ?? 0) }} {{ t('usage.perMillionTokens') }}</span>
-              </div>
-              <div v-if="(tooltipData?.output_tokens ?? 0) > 0" class="flex items-center justify-between gap-4">
-                <span class="text-gray-400">{{ t('usage.outputTokenPrice') }}</span>
-                <span class="font-medium text-violet-300">{{ formatTokenPricePerMillion(tooltipData?.output_cost ?? 0, tooltipData?.output_tokens ?? 0) }} {{ t('usage.perMillionTokens') }}</span>
-              </div>
-            </template>
             <div v-else class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.unitPrice') }}</span>
               <span class="font-medium text-sky-300">${{ tooltipData?.total_cost?.toFixed(6) || '0.000000' }}</span>
             </div>
-            <div v-if="(tooltipData?.cache_creation_cost ?? 0) > 0" class="flex items-center justify-between gap-4">
+            <div v-if="tooltipData && tooltipData.cache_creation_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheCreationCost') }}</span>
-              <span class="font-medium text-white">${{ (tooltipData?.cache_creation_cost ?? 0).toFixed(6) }}</span>
+              <span class="font-medium text-white">${{ tooltipData.cache_creation_cost.toFixed(6) }}</span>
             </div>
-            <div v-if="(tooltipData?.cache_read_cost ?? 0) > 0" class="flex items-center justify-between gap-4">
+            <div v-if="tooltipData && tooltipData.cache_read_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheReadCost') }}</span>
-              <span class="font-medium text-white">${{ (tooltipData?.cache_read_cost ?? 0).toFixed(6) }}</span>
+              <span class="font-medium text-white">${{ tooltipData.cache_read_cost.toFixed(6) }}</span>
             </div>
           </div>
           <!-- Rate and Summary -->
@@ -401,13 +426,23 @@ import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
-import { getBillingModeLabel, getBillingModeBadgeClass, BILLING_MODE_TOKEN, BILLING_MODE_IMAGE } from '@/utils/billingMode'
+import {
+  BILLING_MODE_TOKEN,
+  getBillingModeLabel,
+  getBillingModeBadgeClass,
+  isImageUsage,
+  getDisplayBillingMode,
+  imageUnitPrice,
+} from '@/utils/billingMode'
 import {
   formatImageBillingSize,
   formatImageInputSize,
   formatImageOutputSize,
   formatImageSizeBreakdown,
   formatImageSizeSource,
+  hasImageOutputTokens,
+  textOutputTokens,
+  hasImageOutputCost,
 } from '@/utils/imageUsage'
 
 /** Compute the account-billed cost for display: (account_stats_cost ?? total_cost) * rate_multiplier */
@@ -417,33 +452,15 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
   return Number.isNaN(result) ? 0 : result
 }
 
-function imageUnitPrice(row: AdminUsageRecord | null): number {
-  const imageCount = row?.image_count ?? 0
-  if (imageCount <= 0) return 0
-  const total = row?.total_cost ?? 0
-  const price = total / imageCount
-  return Number.isFinite(price) ? price : 0
-}
-
-function isImageUsage(row: Pick<AdminUsageRecord, 'image_count'> | null | undefined): boolean {
-  return (row?.image_count ?? 0) > 0
-}
-
-function getDisplayBillingMode(row: Pick<AdminUsageRecord, 'billing_mode' | 'image_count'> | null | undefined): string | null | undefined {
-  if (isImageUsage(row)) {
-    return BILLING_MODE_IMAGE
-  }
-  return row?.billing_mode
-}
 
 import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { OpsRequestDetail as AdminUsageRecord } from '@/api/admin/ops'
+import type { OpsRequestDetail } from '@/api/admin/ops'
 import type { Column } from '@/components/common/types'
 
 interface Props {
-  data: AdminUsageRecord[]
+  data: OpsRequestDetail[]
   loading?: boolean
   columns: Column[]
   serverSideSort?: boolean
@@ -466,31 +483,77 @@ const { t } = useI18n()
 // Tooltip state - cost
 const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
-const tooltipData = ref<AdminUsageRecord | null>(null)
+const tooltipData = ref<UsageMetricRow | null>(null)
 
 // Tooltip state - token
 const tokenTooltipVisible = ref(false)
 const tokenTooltipPosition = ref({ x: 0, y: 0 })
-const tokenTooltipData = ref<AdminUsageRecord | null>(null)
+const tokenTooltipData = ref<UsageMetricRow | null>(null)
 
-const isErrorRow = (row: AdminUsageRecord): boolean => row.kind === 'error'
+type UsageMetricRow = OpsRequestDetail & {
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  cache_creation_5m_tokens: number
+  cache_creation_1h_tokens: number
+  input_cost: number
+  output_cost: number
+  cache_creation_cost: number
+  cache_read_cost: number
+  total_cost: number
+  actual_cost: number
+  rate_multiplier: number
+  image_count: number
+  image_output_tokens: number
+  image_output_cost: number
+  cache_ttl_overridden: boolean
+}
 
-const getResultLabel = (row: AdminUsageRecord): string => {
+const normalizeMetricRow = (row: OpsRequestDetail): UsageMetricRow => ({
+  ...row,
+  input_tokens: row.input_tokens ?? 0,
+  output_tokens: row.output_tokens ?? 0,
+  cache_creation_tokens: row.cache_creation_tokens ?? 0,
+  cache_read_tokens: row.cache_read_tokens ?? 0,
+  cache_creation_5m_tokens: row.cache_creation_5m_tokens ?? 0,
+  cache_creation_1h_tokens: row.cache_creation_1h_tokens ?? 0,
+  input_cost: row.input_cost ?? 0,
+  output_cost: row.output_cost ?? 0,
+  cache_creation_cost: row.cache_creation_cost ?? 0,
+  cache_read_cost: row.cache_read_cost ?? 0,
+  total_cost: row.total_cost ?? 0,
+  actual_cost: row.actual_cost ?? 0,
+  rate_multiplier: row.rate_multiplier ?? 1,
+  image_count: row.image_count ?? 0,
+  image_output_tokens: row.image_output_tokens ?? 0,
+  image_output_cost: row.image_output_cost ?? 0,
+  cache_ttl_overridden: row.cache_ttl_overridden ?? false,
+})
+
+const isErrorRow = (row: OpsRequestDetail): boolean => row.kind === 'error'
+
+const displayUserEmail = (row: OpsRequestDetail): string | undefined => row.user?.email || row.user_email
+const displayApiKeyName = (row: OpsRequestDetail): string | undefined => row.api_key?.name || row.api_key_name
+const displayAccountName = (row: OpsRequestDetail): string | undefined => row.account?.name || row.account_name
+const displayGroupName = (row: OpsRequestDetail): string | undefined => row.group?.name || row.group_name
+
+const getResultLabel = (row: OpsRequestDetail): string => {
   if (isErrorRow(row)) return t('admin.ops.requestDetails.kind.error')
   return t('admin.ops.requestDetails.kind.success')
 }
 
-const getResultBadgeClass = (row: AdminUsageRecord): string => {
+const getResultBadgeClass = (row: OpsRequestDetail): string => {
   if (isErrorRow(row)) return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
   return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200'
 }
 
-const getStatusCodeClass = (row: AdminUsageRecord): string => {
+const getStatusCodeClass = (row: OpsRequestDetail): string => {
   if (isErrorRow(row)) return 'text-red-600 dark:text-red-400'
   return 'text-emerald-600 dark:text-emerald-400'
 }
 
-const getRequestTypeLabel = (row: AdminUsageRecord): string => {
+const getRequestTypeLabel = (row: OpsRequestDetail): string => {
   const requestType = resolveUsageRequestType(row)
   if (requestType === 'ws_v2') return t('usage.ws')
   if (requestType === 'stream') return t('usage.stream')
@@ -498,7 +561,7 @@ const getRequestTypeLabel = (row: AdminUsageRecord): string => {
   return t('usage.unknown')
 }
 
-const getRequestTypeBadgeClass = (row: AdminUsageRecord): string => {
+const getRequestTypeBadgeClass = (row: OpsRequestDetail): string => {
   const requestType = resolveUsageRequestType(row)
   if (requestType === 'ws_v2') return 'bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200'
   if (requestType === 'stream') return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
@@ -518,26 +581,27 @@ const formatDuration = (ms: number | null | undefined): string => {
   return `${(ms / 1000).toFixed(2)}s`
 }
 
-const hasTokenMetrics = (row: AdminUsageRecord): boolean => {
+const hasTokenMetrics = (row: OpsRequestDetail): boolean => {
   return !isErrorRow(row) && (
     (row.input_tokens ?? 0) > 0 ||
     (row.output_tokens ?? 0) > 0 ||
     (row.cache_read_tokens ?? 0) > 0 ||
     (row.cache_creation_tokens ?? 0) > 0 ||
-    (row.image_count ?? 0) > 0
+    (row.image_count ?? 0) > 0 ||
+    (row.image_output_tokens ?? 0) > 0
   )
 }
 
-const hasCostMetrics = (row: AdminUsageRecord): boolean => {
+const hasCostMetrics = (row: OpsRequestDetail): boolean => {
   return !isErrorRow(row) && row.actual_cost != null
 }
 
 // Cost tooltip functions
-const showTooltip = (event: MouseEvent, row: AdminUsageRecord) => {
+const showTooltip = (event: MouseEvent, row: OpsRequestDetail) => {
   if (!hasCostMetrics(row)) return
   const target = event.currentTarget as HTMLElement
   const rect = target.getBoundingClientRect()
-  tooltipData.value = row
+  tooltipData.value = normalizeMetricRow(row)
   tooltipPosition.value.x = rect.right + 8
   tooltipPosition.value.y = rect.top + rect.height / 2
   tooltipVisible.value = true
@@ -549,11 +613,11 @@ const hideTooltip = () => {
 }
 
 // Token tooltip functions
-const showTokenTooltip = (event: MouseEvent, row: AdminUsageRecord) => {
+const showTokenTooltip = (event: MouseEvent, row: OpsRequestDetail) => {
   if (!hasTokenMetrics(row)) return
   const target = event.currentTarget as HTMLElement
   const rect = target.getBoundingClientRect()
-  tokenTooltipData.value = row
+  tokenTooltipData.value = normalizeMetricRow(row)
   tokenTooltipPosition.value.x = rect.right + 8
   tokenTooltipPosition.value.y = rect.top + rect.height / 2
   tokenTooltipVisible.value = true

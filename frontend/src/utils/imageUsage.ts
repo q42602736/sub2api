@@ -1,12 +1,44 @@
-import type { UsageLog } from '@/types'
-
 type Translate = (key: string) => string
+
+// --- Image output token / cost helpers ---
+
+interface ImageOutputTokenRow {
+  output_tokens?: number | null
+  image_output_tokens?: number | null
+}
+
+interface ImageOutputCostRow {
+  image_output_cost?: number | null
+}
+
+/** Whether the row contains any image-output tokens. */
+export const hasImageOutputTokens = (row: ImageOutputTokenRow | null | undefined): boolean =>
+  (row?.image_output_tokens ?? 0) > 0
+
+/**
+ * Text-only output tokens (total output minus image-output).
+ * Returns 0 when no text tokens exist.
+ */
+export const textOutputTokens = (row: ImageOutputTokenRow | null | undefined): number =>
+  Math.max(0, (row?.output_tokens ?? 0) - (row?.image_output_tokens ?? 0))
+
+/** Whether the row has a non-zero image-output cost. */
+export const hasImageOutputCost = (row: ImageOutputCostRow | null | undefined): boolean =>
+  (row?.image_output_cost ?? 0) > 0
+
+// --- Image size / billing helpers ---
 
 const knownImageSizeSources = new Set(['output', 'input', 'default', 'legacy'])
 const knownImageBillingSizes = new Set(['1K', '2K', '4K', 'mixed'])
 
 type ImageUsageRow = Pick<
-  Partial<UsageLog>,
+  {
+    image_size?: string | null
+    image_input_size?: string | null
+    image_output_size?: string | null
+    image_size_source?: string | null
+    image_size_breakdown?: Record<string, number> | null
+  },
   'image_size' | 'image_input_size' | 'image_output_size' | 'image_size_source' | 'image_size_breakdown'
 >
 
