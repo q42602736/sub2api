@@ -5,7 +5,7 @@
  */
 
 import { apiClient } from '../client'
-import type { ApiKey, Group, ImageSizeSource, PaginatedResponse, User } from '@/types'
+import type { ApiKey, Group, ImageSizeSource, PaginatedResponse, UsageRequestType, User } from '@/types'
 
 export type OpsQueryMode = 'auto' | 'raw' | 'preagg'
 
@@ -195,7 +195,7 @@ export interface OpsRequestDetailsParams {
   user_id?: number
   api_key_id?: number
   account_id?: number
-  request_type?: 'unknown' | 'sync' | 'stream' | 'ws_v2'
+  request_type?: UsageRequestType
 
   model?: string
   request_id?: string

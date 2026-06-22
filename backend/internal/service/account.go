@@ -623,6 +623,9 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // 如果未配置 mapping，返回 true（允许所有模型）
 func (a *Account) IsModelSupported(requestedModel string) bool {
 	mapping := a.GetModelMapping()
+	if a.isOpenAIFreePlanUnsupportedModel(requestedModel, mapping) {
+		return false
+	}
 	if len(mapping) == 0 {
 		return true // 无映射 = 允许所有
 	}
@@ -631,6 +634,24 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	}
 	normalized := normalizeRequestedModelForLookup(a.Platform, requestedModel)
 	return normalized != requestedModel && mappingSupportsRequestedModel(mapping, normalized)
+}
+
+func (a *Account) isOpenAIFreePlanUnsupportedModel(requestedModel string, mapping map[string]string) bool {
+	if a == nil || !a.IsOpenAIOAuth() || a.GetOpenAIPlanType() != "free" {
+		return false
+	}
+	upstreamModel := requestedModel
+	if len(mapping) > 0 {
+		if mappedModel, matched := resolveRequestedModelInMapping(mapping, requestedModel); matched {
+			upstreamModel = mappedModel
+		} else if normalized := normalizeRequestedModelForLookup(a.Platform, requestedModel); normalized != requestedModel {
+			if mappedModel, matched := resolveRequestedModelInMapping(mapping, normalized); matched {
+				upstreamModel = mappedModel
+			}
+		}
+	}
+	normalized := strings.ToLower(NormalizeOpenAICompatRequestedModel(upstreamModel))
+	return normalized == "gpt-5.4"
 }
 
 // GetMappedModel 获取映射后的模型名（支持通配符，最长优先匹配）
@@ -1117,6 +1138,17 @@ func (a *Account) GetChatGPTAccountID() string {
 		return ""
 	}
 	return a.GetCredential("chatgpt_account_id")
+}
+
+func (a *Account) GetOpenAIPlanType() string {
+	if !a.IsOpenAIOAuth() {
+		return ""
+	}
+	planType := strings.TrimSpace(a.GetCredential("plan_type"))
+	if planType == "" {
+		planType = strings.TrimSpace(a.GetCredential("chatgpt_plan_type"))
+	}
+	return strings.ToLower(planType)
 }
 
 func (a *Account) GetOpenAIDeviceID() string {

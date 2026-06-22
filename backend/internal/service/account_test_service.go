@@ -499,7 +499,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Default to openai.DefaultTestModel for OpenAI testing
 	testModelID := modelID
 	if testModelID == "" {
-		testModelID = openai.DefaultTestModel
+		testModelID = defaultOpenAIAccountTestModel(account)
 	}
 
 	// Align test routing with gateway behavior: OpenAI accounts apply normal
@@ -629,6 +629,13 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// Process SSE stream
 	return s.processOpenAIStream(c, resp.Body)
+}
+
+func defaultOpenAIAccountTestModel(account *Account) string {
+	if account != nil && account.IsOpenAIOAuth() && account.GetOpenAIPlanType() == "free" {
+		return "gpt-5.5"
+	}
+	return openai.DefaultTestModel
 }
 
 // testOpenAIChatCompletionsConnection tests an OpenAI-compatible APIKey account

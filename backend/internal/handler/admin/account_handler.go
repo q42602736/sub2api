@@ -1984,13 +1984,13 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	if account.IsOpenAI() {
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
 		if account.IsOpenAIPassthroughEnabled() {
-			response.Success(c, openai.DefaultModels)
+			response.Success(c, filterOpenAIDefaultModelsForAccount(account))
 			return
 		}
 
 		mapping := account.GetModelMapping()
 		if len(mapping) == 0 {
-			response.Success(c, openai.DefaultModels)
+			response.Success(c, filterOpenAIDefaultModelsForAccount(account))
 			return
 		}
 
@@ -2102,6 +2102,20 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	}
 
 	response.Success(c, models)
+}
+
+func filterOpenAIDefaultModelsForAccount(account *service.Account) []openai.Model {
+	if account == nil {
+		return openai.DefaultModels
+	}
+	models := make([]openai.Model, 0, len(openai.DefaultModels))
+	accounts := []service.Account{*account}
+	for _, model := range openai.DefaultModels {
+		if service.IsOpenAIDefaultModelSupportedByAnyAccount(model.ID, accounts) {
+			models = append(models, model)
+		}
+	}
+	return models
 }
 
 // SyncUpstreamModels handles syncing live supported models from an account's upstream.

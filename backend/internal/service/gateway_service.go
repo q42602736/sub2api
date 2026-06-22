@@ -28,7 +28,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -585,6 +587,17 @@ func (e *UpstreamFailoverError) Error() string {
 	return fmt.Sprintf("upstream error: %d (failover)", e.StatusCode)
 }
 
+// sseStreamErrorEventError 表示上游 SSE 流体内出现 event:error 帧。
+// RawData 是该事件 data: 行的原始 JSON 字符串
+// （Anthropic 标准结构 {"type":"error","error":{"type":"...","message":"..."}}）。
+// Error() 保持原字符串以兼容现有日志/检索；调用方应通过 errors.As
+// 提取 RawData 并构造 UpstreamFailoverError.ResponseBody。
+type sseStreamErrorEventError struct {
+	RawData string
+}
+
+func (e *sseStreamErrorEventError) Error() string { return "have error in stream" }
+
 // TempUnscheduleRetryableError 对 RetryableOnSameAccount 类型的 failover 错误触发临时封禁。
 // 由 handler 层在同账号重试全部用尽、切换账号时调用。
 func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accountID int64, failoverErr *UpstreamFailoverError) {
@@ -770,7 +783,11 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 	if systemText := extractTextFromSystemRaw(parsed.SystemRaw()); systemText != "" {
 		_, _ = combined.WriteString(systemText)
 	}
+	contentStart := combined.Len()
 	appendMessageTextsFromRaw(&combined, parsed.MessagesRaw())
+	if combined.Len() == contentStart {
+		appendResponsesSessionAnchorFromRaw(&combined, parsed.InputRaw())
+	}
 	if combined.Len() > 0 {
 		hash := s.hashContent(combined.String())
 		slog.Info("sticky.hash_source",
@@ -929,6 +946,65 @@ func appendMessageTextsFromRaw(builder *strings.Builder, raw []byte) {
 	})
 }
 
+func appendResponsesSessionAnchorFromRaw(builder *strings.Builder, raw []byte) {
+	if builder == nil || len(raw) == 0 {
+		return
+	}
+	input := parseRawJSONView(raw)
+	if input.Type == gjson.String {
+		_, _ = builder.WriteString(input.String())
+		return
+	}
+	if !input.IsArray() {
+		return
+	}
+
+	input.ForEach(func(_, item gjson.Result) bool {
+		if item.Type == gjson.String {
+			_, _ = builder.WriteString(item.String())
+			return false
+		}
+
+		switch item.Get("role").String() {
+		case "system", "developer":
+			appendResponsesContentText(builder, item.Get("content"))
+		case "user":
+			appendResponsesContentText(builder, item.Get("content"))
+			return false
+		default:
+			if item.Get("type").String() == "input_text" {
+				if text := item.Get("text").String(); text != "" {
+					_, _ = builder.WriteString(text)
+				}
+				return false
+			}
+		}
+		return true
+	})
+}
+
+func appendResponsesContentText(builder *strings.Builder, content gjson.Result) {
+	if builder == nil || !content.Exists() {
+		return
+	}
+	if content.Type == gjson.String {
+		_, _ = builder.WriteString(content.String())
+		return
+	}
+	if !content.IsArray() {
+		return
+	}
+	content.ForEach(func(_, part gjson.Result) bool {
+		switch part.Get("type").String() {
+		case "input_text", "text":
+			if text := part.Get("text").String(); text != "" {
+				_, _ = builder.WriteString(text)
+			}
+		}
+		return true
+	})
+}
+
 func extractCacheableTextFromSystemRaw(raw []byte) string {
 	system := parseRawJSONView(raw)
 	if !system.IsArray() {
@@ -1034,6 +1110,17 @@ func marshalAnthropicSystemTextBlock(text string, includeCacheControl bool) ([]b
 			Type: "ephemeral",
 			TTL:  claude.DefaultCacheControlTTL,
 		}
+	}
+	return json.Marshal(block)
+}
+
+func marshalAnthropicSystemTextBlockWithCacheControl(text string, cacheControl any) ([]byte, error) {
+	block := map[string]any{
+		"type": "text",
+		"text": text,
+	}
+	if cacheControl != nil {
+		block["cache_control"] = cacheControl
 	}
 	return json.Marshal(block)
 }
@@ -1336,9 +1423,10 @@ func (s *GatewayService) applyClaudeCodeOAuthMimicryToBody(
 		return body
 	}
 
+	systemPromptInjectionEnabled, systemPrompt, systemPromptBlocks := s.claudeOAuthSystemPromptInjectionSettings(ctx)
 	systemRewritten := false
-	if !strings.Contains(strings.ToLower(model), "haiku") {
-		body = rewriteSystemForNonClaudeCode(body, normalizeSystemParam(systemRaw))
+	if systemPromptInjectionEnabled && !strings.Contains(strings.ToLower(model), "haiku") {
+		body = rewriteSystemForNonClaudeCodeWithPromptBlocks(body, normalizeSystemParam(systemRaw), systemPrompt, systemPromptBlocks)
 		systemRewritten = true
 	}
 
@@ -2131,13 +2219,17 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// 分层过滤选择：优先级 → 负载率 → LRU
+		// 分层过滤选择：优先级 →（可选）最早重置 → 负载率 → LRU
 		for len(available) > 0 {
 			// 1. 取优先级最小的集合
 			candidates := filterByMinPriority(available)
-			// 2. 取负载率最低的集合
+			// 2. （可选）use-it-or-lose-it：优先选用会话窗口最早重置的账号
+			if cfg.PreferSoonestReset {
+				candidates = filterBySoonestReset(candidates)
+			}
+			// 3. 取负载率最低的集合
 			candidates = filterByMinLoadRate(candidates)
-			// 3. LRU 选择最久未用的账号
+			// 4. LRU 选择最久未用的账号
 			selected := selectByLRU(candidates, preferOAuth)
 			if selected == nil {
 				break
@@ -2361,14 +2453,16 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 				"platform", platform,
 				"use_mixed", useMixed,
 				"count", len(accounts))
-			for _, acc := range accounts {
-				slog.Debug("account_scheduling_account_detail",
-					"account_id", acc.ID,
-					"name", acc.Name,
-					"platform", acc.Platform,
-					"type", acc.Type,
-					"status", acc.Status,
-					"tls_fingerprint", acc.IsTLSFingerprintEnabled())
+			if slog.Default().Enabled(ctx, slog.LevelDebug) {
+				for _, acc := range accounts {
+					slog.Debug("account_scheduling_account_detail",
+						"account_id", acc.ID,
+						"name", acc.Name,
+						"platform", acc.Platform,
+						"type", acc.Type,
+						"status", acc.Status,
+						"tls_fingerprint", acc.IsTLSFingerprintEnabled())
+				}
 			}
 		}
 		return accounts, useMixed, err
@@ -2404,14 +2498,16 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 			"platform", platform,
 			"raw_count", len(accounts),
 			"filtered_count", len(filtered))
-		for _, acc := range filtered {
-			slog.Debug("account_scheduling_account_detail",
-				"account_id", acc.ID,
-				"name", acc.Name,
-				"platform", acc.Platform,
-				"type", acc.Type,
-				"status", acc.Status,
-				"tls_fingerprint", acc.IsTLSFingerprintEnabled())
+		if slog.Default().Enabled(ctx, slog.LevelDebug) {
+			for _, acc := range filtered {
+				slog.Debug("account_scheduling_account_detail",
+					"account_id", acc.ID,
+					"name", acc.Name,
+					"platform", acc.Platform,
+					"type", acc.Type,
+					"status", acc.Status,
+					"tls_fingerprint", acc.IsTLSFingerprintEnabled())
+			}
 		}
 		return filtered, useMixed, nil
 	}
@@ -2437,14 +2533,16 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 		"group_id", derefGroupID(groupID),
 		"platform", platform,
 		"count", len(accounts))
-	for _, acc := range accounts {
-		slog.Debug("account_scheduling_account_detail",
-			"account_id", acc.ID,
-			"name", acc.Name,
-			"platform", acc.Platform,
-			"type", acc.Type,
-			"status", acc.Status,
-			"tls_fingerprint", acc.IsTLSFingerprintEnabled())
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		for _, acc := range accounts {
+			slog.Debug("account_scheduling_account_detail",
+				"account_id", acc.ID,
+				"name", acc.Name,
+				"platform", acc.Platform,
+				"type", acc.Type,
+				"status", acc.Status,
+				"tls_fingerprint", acc.IsTLSFingerprintEnabled())
+		}
 	}
 	return accounts, useMixed, nil
 }
@@ -2884,6 +2982,39 @@ func filterByMinLoadRate(accounts []accountWithLoad) []accountWithLoad {
 	result := make([]accountWithLoad, 0, len(accounts))
 	for _, acc := range accounts {
 		if acc.loadInfo.LoadRate == minLoadRate {
+			result = append(result, acc)
+		}
+	}
+	return result
+}
+
+// filterBySoonestReset 过滤出「会话窗口最早重置」的账号集合（use-it-or-lose-it）。
+// 仅保留拥有未来重置时间（SessionWindowEnd 在当前时间之后）且最早的账号；
+// 窗口为空或已过期的账号视为无活跃窗口、优先级最低。
+// 当所有账号都没有活跃窗口时，返回原集合（不改变后续 LRU 选择）。
+func filterBySoonestReset(accounts []accountWithLoad) []accountWithLoad {
+	if len(accounts) <= 1 {
+		return accounts
+	}
+	now := time.Now()
+	var minEnd *time.Time
+	for _, acc := range accounts {
+		end := acc.account.SessionWindowEnd
+		if end == nil || !now.Before(*end) {
+			continue
+		}
+		if minEnd == nil || end.Before(*minEnd) {
+			minEnd = end
+		}
+	}
+	if minEnd == nil {
+		// 没有任何账号拥有活跃窗口，保持原集合
+		return accounts
+	}
+	result := make([]accountWithLoad, 0, len(accounts))
+	for _, acc := range accounts {
+		end := acc.account.SessionWindowEnd
+		if end != nil && now.Before(*end) && end.Equal(*minEnd) {
 			result = append(result, acc)
 		}
 	}
@@ -4155,7 +4286,183 @@ func injectClaudeCodePrompt(body []byte, system any) []byte {
 // 无法通过检测，因为后续内容仍为非 Claude Code 格式。
 // 策略：将原始 system prompt 提取并注入为 user/assistant 消息对，system 仅保留 Claude Code 标识。
 func rewriteSystemForNonClaudeCode(body []byte, system any) []byte {
+	return rewriteSystemForNonClaudeCodeWithPromptBlocks(body, system, "", "")
+}
+
+func rewriteSystemForNonClaudeCodeWithPrompt(body []byte, system any, expansionPrompt string) []byte {
+	return rewriteSystemForNonClaudeCodeWithPromptBlocks(body, system, expansionPrompt, "")
+}
+
+type claudeOAuthSystemPromptBlockConfig struct {
+	Enabled      *bool           `json:"enabled,omitempty"`
+	Type         string          `json:"type,omitempty"`
+	Text         string          `json:"text,omitempty"`
+	CacheControl json.RawMessage `json:"cache_control,omitempty"`
+}
+
+type claudeOAuthSystemPromptBlocksEnvelope struct {
+	Blocks []claudeOAuthSystemPromptBlockConfig `json:"blocks"`
+}
+
+func defaultClaudeOAuthExpansionPrompt(expansionPrompt string) string {
+	expansionPrompt = strings.TrimSpace(expansionPrompt)
+	if expansionPrompt == "" {
+		return claudeCodeSystemPromptExpansion
+	}
+	return expansionPrompt
+}
+
+func parseClaudeOAuthSystemPromptBlocksConfig(raw string) ([]claudeOAuthSystemPromptBlockConfig, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(raw, "[") {
+		var blocks []claudeOAuthSystemPromptBlockConfig
+		if err := json.Unmarshal([]byte(raw), &blocks); err != nil {
+			return nil, err
+		}
+		return blocks, nil
+	}
+	var envelope claudeOAuthSystemPromptBlocksEnvelope
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		return nil, err
+	}
+	return envelope.Blocks, nil
+}
+
+func decodeClaudeOAuthSystemPromptCacheControl(raw json.RawMessage) (any, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) || bytes.Equal(trimmed, []byte("false")) {
+		return nil, nil
+	}
+	if bytes.Equal(trimmed, []byte("true")) {
+		return map[string]string{
+			"type": "ephemeral",
+			"ttl":  claude.DefaultCacheControlTTL,
+		}, nil
+	}
+	var value any
+	if err := json.Unmarshal(trimmed, &value); err != nil {
+		return nil, err
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return nil, fmt.Errorf("cache_control must be boolean, null, or object")
+	}
+	return value, nil
+}
+
+func expandClaudeOAuthSystemPromptTextTemplate(body []byte, text string, expansionPrompt string) (string, error) {
+	if text == "" {
+		return "", nil
+	}
+	expansionPrompt = defaultClaudeOAuthExpansionPrompt(expansionPrompt)
+	billingText, err := buildBillingAttributionText(body, claude.CLICurrentVersion)
+	if err != nil {
+		return "", err
+	}
+	fp := computeClaudeCodeFingerprint(body, claude.CLICurrentVersion)
+	replacer := strings.NewReplacer(
+		"{billing_header}", billingText,
+		"{cc_version}", claude.CLICurrentVersion,
+		"{fp}", fp,
+		"{claude_code_system_prompt}", claudeCodeSystemPrompt,
+		"{claude_code_expansion_prompt}", expansionPrompt,
+	)
+	return replacer.Replace(text), nil
+}
+
+func defaultClaudeOAuthSystemPromptBlockConfig() []claudeOAuthSystemPromptBlockConfig {
+	enabled := true
+	return []claudeOAuthSystemPromptBlockConfig{
+		{
+			Enabled: &enabled,
+			Type:    "text",
+			Text:    "{billing_header}",
+		},
+		{
+			Enabled: &enabled,
+			Type:    "text",
+			Text:    "{claude_code_system_prompt}",
+		},
+		{
+			Enabled: &enabled,
+			Type:    "text",
+			Text:    "{claude_code_expansion_prompt}",
+			CacheControl: json.RawMessage(
+				fmt.Sprintf(`{"type":"ephemeral","ttl":%q}`, claude.DefaultCacheControlTTL),
+			),
+		},
+	}
+}
+
+func buildClaudeOAuthSystemPromptBlocksJSON(body []byte, expansionPrompt string, blocksConfig string) ([][]byte, error) {
+	blocks, err := parseClaudeOAuthSystemPromptBlocksConfig(blocksConfig)
+	if err != nil {
+		return nil, err
+	}
+	if len(blocks) == 0 {
+		blocks = defaultClaudeOAuthSystemPromptBlockConfig()
+	}
+
+	items := make([][]byte, 0, len(blocks))
+	for i, block := range blocks {
+		if block.Enabled != nil && !*block.Enabled {
+			continue
+		}
+		blockType := strings.TrimSpace(block.Type)
+		if blockType == "" {
+			blockType = "text"
+		}
+		if blockType != "text" {
+			return nil, fmt.Errorf("system block %d type %q is not supported", i, block.Type)
+		}
+		text, err := expandClaudeOAuthSystemPromptTextTemplate(body, block.Text, expansionPrompt)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		cacheControl, err := decodeClaudeOAuthSystemPromptCacheControl(block.CacheControl)
+		if err != nil {
+			return nil, fmt.Errorf("system block %d cache_control: %w", i, err)
+		}
+		raw, err := marshalAnthropicSystemTextBlockWithCacheControl(text, cacheControl)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, raw)
+	}
+	return items, nil
+}
+
+func ValidateClaudeOAuthSystemPromptBlocksConfig(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	blocks, err := parseClaudeOAuthSystemPromptBlocksConfig(raw)
+	if err != nil {
+		return infraerrors.BadRequest("INVALID_CLAUDE_OAUTH_SYSTEM_PROMPT_BLOCKS", "claude oauth system prompt blocks must be valid JSON")
+	}
+	for i, block := range blocks {
+		blockType := strings.TrimSpace(block.Type)
+		if blockType == "" {
+			blockType = "text"
+		}
+		if blockType != "text" {
+			return infraerrors.BadRequest("INVALID_CLAUDE_OAUTH_SYSTEM_PROMPT_BLOCKS", fmt.Sprintf("system block %d type must be text", i))
+		}
+		if _, err := decodeClaudeOAuthSystemPromptCacheControl(block.CacheControl); err != nil {
+			return infraerrors.BadRequest("INVALID_CLAUDE_OAUTH_SYSTEM_PROMPT_BLOCKS", fmt.Sprintf("system block %d cache_control is invalid", i))
+		}
+	}
+	return nil
+}
+
+func rewriteSystemForNonClaudeCodeWithPromptBlocks(body []byte, system any, expansionPrompt string, blocksConfig string) []byte {
 	system = normalizeSystemParam(system)
+	expansionPrompt = defaultClaudeOAuthExpansionPrompt(expansionPrompt)
 
 	// 1. 提取原始 system prompt 文本
 	var originalSystemText string
@@ -4175,27 +4482,27 @@ func rewriteSystemForNonClaudeCode(body []byte, system any) []byte {
 	}
 
 	// 2. 构造 system 数组，对齐真实 Claude Code CLI 的 3-block 形态：
-	//    [0] billing attribution block（cc_version={cliVer}.{fp}; cc_entrypoint=cli; cch=00000;）
-	//    [1] "You are Claude Code..." 身份前缀 block（带 cache_control）
+	//    [0] billing attribution block（cc_version={cliVer}.{fp}; cc_entrypoint=cli;）
+	//    [1] "You are Claude Code..." 身份前缀 block（默认不带 cache_control）
 	//    [2] 工具无关的通用提示词扩充 block（带 cache_control 作为稳定缓存断点）
 	//
 	//    真实 CC 的 system 在身份前缀之后还有大段提示词，仅有 2 块会在块数/体量上明显
 	//    区别于真实 CLI。这里注入 claudeCodeSystemPromptExpansion（中性段落）把形态做到
 	//    接近真实，同时不注入会污染被代理用户行为的工具专属指令。
 	//
-	//    billing block 的 cch=00000 是占位符，会被 buildUpstreamRequest 里的
-	//    signBillingHeaderCCH 替换成 xxhash64 签名。缺失 billing block 的系统 payload
-	//    是 Anthropic 判定第三方的关键信号之一（真实 CLI 每个请求都带）。
-	billingBlock, billingErr := buildBillingAttributionBlockJSON(body, claude.CLICurrentVersion)
-	// 身份块不带 cache_control；缓存断点统一落在最后一个静态块（扩充块）上，
-	// 使 billing+身份+扩充 整段静态前缀都被同一断点覆盖，且只消耗 1 个断点配额。
-	ccPromptBlock, ccErr := marshalAnthropicSystemTextBlock(claudeCodeSystemPrompt, false)
-	ccExpansionBlock, expErr := marshalAnthropicSystemTextBlock(claudeCodeSystemPromptExpansion, true)
-	if billingErr != nil || ccErr != nil || expErr != nil {
-		logger.LegacyPrintf("service.gateway", "Warning: failed to build system blocks (billing=%v, cc=%v, exp=%v)", billingErr, ccErr, expErr)
+	//    缺失 billing block 的系统 payload 是 Anthropic 判定第三方的关键信号之一
+	//    （真实 CLI 每个请求都带）。新版 CLI 已取消 cch=... 签名字段，故 block 不再注入
+	//    cch（见 buildBillingAttributionText）。
+	systemBlocks, blockErr := buildClaudeOAuthSystemPromptBlocksJSON(body, expansionPrompt, blocksConfig)
+	if blockErr != nil {
+		logger.LegacyPrintf("service.gateway", "Warning: failed to build configured Claude OAuth system blocks: %v", blockErr)
+		systemBlocks, blockErr = buildClaudeOAuthSystemPromptBlocksJSON(body, expansionPrompt, "")
+	}
+	if blockErr != nil {
+		logger.LegacyPrintf("service.gateway", "Warning: failed to build default Claude OAuth system blocks: %v", blockErr)
 		return body
 	}
-	out, ok := setJSONRawBytes(body, "system", buildJSONArrayRaw([][]byte{billingBlock, ccPromptBlock, ccExpansionBlock}))
+	out, ok := setJSONRawBytes(body, "system", buildJSONArrayRaw(systemBlocks))
 	if !ok {
 		logger.LegacyPrintf("service.gateway", "Warning: failed to set Claude Code system prompt")
 		return body
@@ -4475,6 +4782,13 @@ func (s *GatewayService) shouldInjectAnthropicCacheTTL1h(ctx context.Context, ac
 	return s.settingService.IsAnthropicCacheTTL1hInjectionEnabled(ctx)
 }
 
+func (s *GatewayService) claudeOAuthSystemPromptInjectionSettings(ctx context.Context) (bool, string, string) {
+	if s == nil || s.settingService == nil {
+		return true, "", ""
+	}
+	return s.settingService.GetClaudeOAuthSystemPromptInjectionSettings(ctx)
+}
+
 // Forward 转发请求到Claude API
 func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) (*ForwardResult, error) {
 	startTime := time.Now()
@@ -4566,14 +4880,17 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		systemRewritten := false
 		if !strings.Contains(strings.ToLower(reqModel), "haiku") {
 			systemRaw, _ := parsed.SystemValue()
-			if err := replaceBody(rewriteSystemForNonClaudeCode(body, systemRaw)); err != nil {
-				return nil, err
+			systemPromptInjectionEnabled, systemPrompt, systemPromptBlocks := s.claudeOAuthSystemPromptInjectionSettings(ctx)
+			if systemPromptInjectionEnabled {
+				if err := replaceBody(rewriteSystemForNonClaudeCodeWithPromptBlocks(body, systemRaw, systemPrompt, systemPromptBlocks)); err != nil {
+					return nil, err
+				}
+				systemRewritten = true
 			}
-			systemRewritten = true
 		}
 
 		// system 被重写时保留 CC prompt 的 cache_control: ephemeral（匹配真实 Claude Code 行为）；
-		// 未重写时（haiku / 已含 CC 前缀）剥离客户端 cache_control，与原有行为一致。
+		// 未重写时（haiku / 注入开关关闭）剥离客户端 cache_control，与原有行为一致。
 		// 两种情况下 enforceCacheControlLimit 都会兜底处理上限。
 		normalizeOpts := claudeOAuthNormalizeOptions{stripSystemCacheControl: !systemRewritten}
 		if s.identityService != nil {
@@ -4689,6 +5006,29 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if err := replaceBody(StripEmptyTextBlocks(body)); err != nil {
 		return nil, err
 	}
+	// Pre-filter: remove thinking blocks with missing/invalid signatures before forwarding.
+	// Clients (e.g. Claude Code) sometimes send multi-turn conversations where a historical
+	// assistant message contains a thinking block that is missing the required "signature" field,
+	// causing upstream to reject the request with 400 "thinking.signature: Field required".
+	// FilterThinkingBlocks removes only the invalid blocks; thinking blocks with valid signatures
+	// are preserved. This avoids relying solely on the post-error retry path, which can time out
+	// (maxRetryElapsed = 10s) for long conversations before the retry budget is exhausted.
+	//
+	// 仅 anthropic-strict 模型族执行此过滤；passback-required 上游 (DeepSeek/Kimi/GLM 等)
+	// 要求历史 thinking block 原样回传，过滤反而制造 400。reqModel 此时已是映射后的模型 ID。
+	if err := replaceBody(FilterThinkingBlocks(body, reqModel)); err != nil {
+		return nil, err
+	}
+	// Chinese LLM thinking.type 协议差异补正（如 MiniMax 只接受 adaptive；Anthropic-SDK
+	// 客户端默认发 enabled）。仅对 passback-required 上游生效（claude-* 不会进来）。
+	if ResolveThinkingProtocol(reqModel) == ThinkingProtocolPassbackRequired {
+		if rewritten, applied := NormalizeChineseLLMThinking(body, reqModel); applied {
+			if err := replaceBody(rewritten); err != nil {
+				return nil, err
+			}
+			logger.LegacyPrintf("service.gateway", "Account %d: rewrote thinking.type for %s (Anthropic-SDK default 'enabled' -> vendor-specific)", account.ID, reqModel)
+		}
+	}
 
 	// 重试循环
 	var resp *http.Response
@@ -4739,7 +5079,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			if readErr == nil {
 				_ = resp.Body.Close()
 
-				if s.shouldRectifySignatureError(ctx, account, respBody) {
+				if s.shouldRectifySignatureError(ctx, account, respBody, reqModel) {
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 						Platform:           account.Platform,
 						AccountID:          account.ID,
@@ -4779,7 +5119,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					// 2) Only if upstream still errors AND error message points to tool/function signature issues:
 					//    also downgrade tool_use/tool_result blocks to text.
 
-					filteredBody := FilterThinkingBlocksForRetry(body)
+					filteredBody := FilterThinkingBlocksForRetry(body, reqModel)
 					retryCtx, releaseRetryCtx := detachStreamUpstreamContext(ctx, reqStream)
 					retryReq, retryWireBody, buildErr := s.buildUpstreamRequest(retryCtx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 					releaseRetryCtx()
@@ -4820,7 +5160,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 								msg2 := extractUpstreamErrorMessage(retryRespBody)
 								if looksLikeToolSignatureError(msg2) && time.Since(retryStart) < maxRetryElapsed {
 									logger.LegacyPrintf("service.gateway", "Account %d: signature retry still failing and looks tool-related, retrying with tool blocks downgraded", account.ID)
-									filteredBody2 := FilterSignatureSensitiveBlocksForRetry(body)
+									filteredBody2 := FilterSignatureSensitiveBlocksForRetry(body, reqModel)
 									retryCtx2, releaseRetryCtx2 := detachStreamUpstreamContext(ctx, reqStream)
 									retryReq2, retryWireBody2, buildErr2 := s.buildUpstreamRequest(retryCtx2, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 									releaseRetryCtx2()
@@ -5128,9 +5468,46 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if reqStream {
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, reqModel, shouldMimicClaudeCode)
 		if err != nil {
-			if err.Error() == "have error in stream" {
+			var sseErr *sseStreamErrorEventError
+			if errors.As(err, &sseErr) {
+				// 上游 HTTP 200 + SSE 流体内出现 event:error 帧。
+				// 保留 StatusCode=403 以兼容既有 failover/客户端响应语义，
+				// 但补全 ResponseBody 与 ops 上下文，让运维日志能反映上游真实错误。
+				body := []byte(sseErr.RawData)
+
+				upstreamMsg := sanitizeUpstreamErrorMessage(
+					strings.TrimSpace(extractUpstreamErrorMessage(body)),
+				)
+
+				upstreamDetail := ""
+				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+					if maxBytes <= 0 {
+						maxBytes = 2048
+					}
+					upstreamDetail = truncateString(sseErr.RawData, maxBytes)
+				}
+
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: 403,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "stream_error",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
+				})
+
+				logger.LegacyPrintf("service.gateway",
+					"[Forward] SSE error event in stream: Account=%d(%s) RequestID=%s Body=%s",
+					account.ID, account.Name, resp.Header.Get("x-request-id"),
+					truncateString(sseErr.RawData, 1000),
+				)
+
 				return nil, &UpstreamFailoverError{
-					StatusCode: 403,
+					StatusCode:   403,
+					ResponseBody: body,
 				}
 			}
 			return nil, err
@@ -5816,6 +6193,51 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 	return usage
 }
 
+func (s *GatewayService) invalidNonStreamingJSONFailoverError(
+	ctx context.Context,
+	resp *http.Response,
+	account *Account,
+	body []byte,
+	parseErr error,
+	requestedModel ...string,
+) error {
+	const statusCode = http.StatusBadGateway
+
+	accountID := int64(0)
+	accountName := ""
+	retryableOnSameAccount := false
+	if account != nil {
+		accountID = account.ID
+		accountName = account.Name
+		retryableOnSameAccount = account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)
+	}
+
+	logger.LegacyPrintf(
+		"service.gateway",
+		"Account %d(%s): upstream returned non-JSON 2xx response, attempting failover: status=%d request_id=%s error=%v",
+		accountID,
+		accountName,
+		resp.StatusCode,
+		resp.Header.Get("x-request-id"),
+		parseErr,
+	)
+
+	if s.rateLimitService != nil && account != nil {
+		if len(requestedModel) > 0 {
+			s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, resp.Header, body, requestedModel[0])
+		} else {
+			s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, resp.Header, body)
+		}
+	}
+
+	return &UpstreamFailoverError{
+		StatusCode:             statusCode,
+		ResponseBody:           body,
+		ResponseHeaders:        resp.Header,
+		RetryableOnSameAccount: retryableOnSameAccount,
+	}
+}
+
 func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	ctx context.Context,
 	resp *http.Response,
@@ -5829,6 +6251,13 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, anthropicTooLargeError)
 	if err != nil {
 		return nil, err
+	}
+
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		var raw json.RawMessage
+		if err := json.Unmarshal(body, &raw); err != nil {
+			return nil, s.invalidNonStreamingJSONFailoverError(ctx, resp, account, body, err)
+		}
 	}
 
 	usage := parseClaudeUsageFromResponseBody(body)
@@ -5860,15 +6289,24 @@ func writeAnthropicPassthroughResponseHeaders(dst http.Header, src http.Header, 
 }
 
 // ApplyBedrockCCCompat 应用 Bedrock CC 兼容转换（渠道级模型映射后调用）
-// 清理 Anthropic API 专有字段、注入 Bedrock 必需字段、修复 thinking/tool_use ID
-func (s *GatewayService) ApplyBedrockCCCompat(ctx context.Context, body []byte, model string, account *Account, groupID *int64) []byte {
-	if !s.isBedrockCCCompatEnabled(ctx, account, groupID) {
+// 清理 body 中 Anthropic API 专有字段、修复 thinking/tool_use ID、过滤 beta token，
+// 同时过滤 HTTP header 中的 anthropic-beta（防止 Passthrough 路径透传不支持的 token）。
+func (s *GatewayService) ApplyBedrockCCCompat(c *gin.Context, body []byte, model string, account *Account, groupID *int64) []byte {
+	if !s.isBedrockCCCompatEnabled(c.Request.Context(), account, groupID) {
 		return body
 	}
 	body = sanitizeBedrockCCFields(body)
 	body = sanitizeBedrockThinking(body, model)
 	body = sanitizeBedrockToolUseIDs(body)
 	body = sanitizeBedrockCCBetaTokens(body, model)
+	// 过滤 HTTP header 中的 anthropic-beta，只保留 Bedrock 支持的 token
+	if betaHeader := c.GetHeader("anthropic-beta"); betaHeader != "" {
+		if filtered := ResolveBedrockBetaTokens(betaHeader, body, model); len(filtered) > 0 {
+			c.Request.Header.Set("anthropic-beta", strings.Join(filtered, ", "))
+		} else {
+			c.Request.Header.Del("anthropic-beta")
+		}
+	}
 	return body
 }
 
@@ -6279,9 +6717,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 
 	// OAuth账号：应用统一指纹和metadata重写（受设置开关控制）
 	var fingerprint *Fingerprint
-	enableFP, enableMPT, enableCCH := true, false, false
+	enableFP, enableMPT := true, false
 	if s.settingService != nil {
-		enableFP, enableMPT, enableCCH = s.settingService.GetGatewayForwardingSettings(ctx)
+		enableFP, enableMPT, _ = s.settingService.GetGatewayForwardingSettings(ctx)
 	}
 	if account.IsOAuth() && s.identityService != nil {
 		// 1. 获取或创建指纹（包含随机生成的ClientID）
@@ -6333,11 +6771,6 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	// 能力维度 body sanitize：与最终 anthropic-beta header 对称
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, finalBetaHeader); changed {
 		body = sanitized
-	}
-
-	// CCH 签名：将 cch=00000 占位符替换为 xxHash64 签名（需在所有 body 修改之后）
-	if enableCCH {
-		body = signBillingHeaderCCH(body)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
@@ -6430,6 +6863,48 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	return req, body, nil
 }
 
+// vertexSupportedBetaTokens 是 Vertex AI 的 Anthropic 端点接受的 anthropic-beta
+// 白名单。Vertex 对任何未知 token 直接 HTTP 400，故采用白名单（与 Bedrock 的
+// bedrockSupportedBetaTokens 同思路）而非黑名单：未来 Claude Code 新增的、Vertex 尚未
+// 支持的 token 天然被剥离。当 Vertex 新增支持某 beta 时在此补充。
+//
+// 明确排除（issue #3358 中 Vertex 报 400 的 token）：advisor-tool-2026-03-01、
+// prompt-caching-scope-2026-01-05、redact-thinking-2026-02-12、
+// thinking-token-count-2026-05-13；以及 claude-code-20250219 / oauth-2025-04-20 等
+// 客户端身份 beta——Vertex service_account 走 Bearer 鉴权，不需要它们。
+var vertexSupportedBetaTokens = map[string]bool{
+	"context-1m-2025-08-07":                  true,
+	"context-management-2025-06-27":          true,
+	"fine-grained-tool-streaming-2025-05-14": true,
+	"interleaved-thinking-2025-05-14":        true,
+}
+
+// filterVertexBetaTokens 解析 client 的 anthropic-beta header，先剔除 drop 集合中的
+// token（BetaPolicy filter + 默认 drop），再只保留 Vertex 支持的 token，去重后逗号拼接。
+// 返回最终 header（可能为空字符串）。
+func filterVertexBetaTokens(header string, drop map[string]struct{}) string {
+	tokens := parseAnthropicBetaHeader(header)
+	if len(tokens) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(tokens))
+	seen := make(map[string]bool, len(tokens))
+	for _, t := range tokens {
+		if _, dropped := drop[t]; dropped {
+			continue
+		}
+		if !vertexSupportedBetaTokens[t] {
+			continue
+		}
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return strings.Join(out, ",")
+}
+
 func (s *GatewayService) buildUpstreamRequestAnthropicVertex(
 	ctx context.Context,
 	c *gin.Context,
@@ -6444,14 +6919,27 @@ func (s *GatewayService) buildUpstreamRequestAnthropicVertex(
 		return nil, err
 	}
 
-	// 能力维度 sanitize：Vertex 路径上 anthropic-beta header 原样透传客户端值
-	// （下面白名单跳过 anthropic-version 但保留 anthropic-beta），依此决定是否
-	// 保留 body 中的 context_management，与 Anthropic 直连 / Bedrock 路径对称。
+	// 计算最终 outgoing anthropic-beta。Vertex AI 的 Anthropic 端点只接受一小撮
+	// beta token，未知 token 会直接 HTTP 400——近期 Claude Code CLI 透传的
+	// advisor-tool-2026-03-01 / prompt-caching-scope-2026-01-05 /
+	// redact-thinking-2026-02-12 / thinking-token-count-2026-05-13 都不被 Vertex 接受
+	// （issue #3358）。这里复用 BetaPolicy 的 block 检查（与 Bedrock 的
+	// resolveBedrockBetaTokensForRequest 对称），再按 vertexSupportedBetaTokens 白名单
+	// 剥离其余 token，使该路径与 Anthropic 直连 / Bedrock 路径行为一致。
+	clientBeta := ""
 	if c != nil && c.Request != nil {
-		clientBeta := getHeaderRaw(c.Request.Header, "anthropic-beta")
-		if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(vertexBody, clientBeta); changed {
-			vertexBody = sanitized
-		}
+		clientBeta = getHeaderRaw(c.Request.Header, "anthropic-beta")
+	}
+	policy := s.evaluateBetaPolicy(ctx, clientBeta, account, modelID)
+	if policy.blockErr != nil {
+		return nil, policy.blockErr
+	}
+	finalBeta := filterVertexBetaTokens(clientBeta, mergeDropSets(policy.filterSet))
+
+	// 能力维度 sanitize：基于最终 beta（而非原始 client 值）决定是否保留 body 中的
+	// context_management，与 Anthropic 直连 / Bedrock 路径对称。
+	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(vertexBody, finalBeta); changed {
+		vertexBody = sanitized
 	}
 	fullURL, err := buildVertexAnthropicURL(account.VertexProjectID(), account.VertexLocation(modelID), modelID, reqStream)
 	if err != nil {
@@ -6482,6 +6970,13 @@ func (s *GatewayService) buildUpstreamRequestAnthropicVertex(
 	req.Header.Del("anthropic-version")
 	setHeaderRaw(req.Header, "authorization", "Bearer "+token)
 	setHeaderRaw(req.Header, "content-type", "application/json")
+
+	// 覆盖上面白名单 loop 写入的原始 client anthropic-beta，使用过滤后的最终值。
+	// finalBeta 为空（全部被剥离）时不下发该 header，与 Vertex 无 beta 请求一致。
+	deleteHeaderAllForms(req.Header, "anthropic-beta")
+	if finalBeta != "" {
+		setHeaderRaw(req.Header, "anthropic-beta", finalBeta)
+	}
 
 	s.debugLogGatewaySnapshot("UPSTREAM_FORWARD_VERTEX_ANTHROPIC", req.Header, vertexBody, map[string]string{
 		"url":        req.URL.String(),
@@ -7050,7 +7545,14 @@ func truncateForLog(b []byte, maxBytes int) string {
 
 // shouldRectifySignatureError 统一判断是否应触发签名整流（strip thinking blocks 并重试）。
 // 根据账号类型检查对应的开关和匹配模式。
-func (s *GatewayService) shouldRectifySignatureError(ctx context.Context, account *Account, respBody []byte) bool {
+//
+// mappedModel 用于按 thinking 协议族分流：passback-required (DeepSeek/Kimi/GLM 等) 上游
+// 的 400 不是签名缺失问题，retry 任何 thinking 变形都会破坏「原样回传」契约——直接透传
+// 错误给客户端。详见 thinking_protocol.go。
+func (s *GatewayService) shouldRectifySignatureError(ctx context.Context, account *Account, respBody []byte, mappedModel string) bool {
+	if !ShouldRectifyThinkingSignatureError(mappedModel) {
+		return false
+	}
 	if account.Type == AccountTypeAPIKey {
 		// API Key 账号：独立开关，一次读取配置
 		settings, err := s.settingService.GetRectifierSettings(ctx)
@@ -7353,6 +7855,8 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: body}
 	}
 
+	MarkResponseCommitted(c)
+
 	// 记录上游错误响应体摘要便于排障（可选：由配置控制；不回显到客户端）
 	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 		logger.LegacyPrintf("service.gateway",
@@ -7476,6 +7980,7 @@ func (s *GatewayService) handleFailoverSideEffects(ctx context.Context, resp *ht
 // OAuth 403：标记账号异常
 // API Key 未配置错误码：仅返回错误，不标记账号
 func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *http.Response, c *gin.Context, account *Account) (*ForwardResult, error) {
+	MarkResponseCommitted(c)
 	// Capture upstream error body before side-effects consume the stream.
 	respBody, _ := s.readUpstreamErrorBody(resp)
 	_ = resp.Body.Close()
@@ -7729,7 +8234,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 
 		if eventName == "error" {
-			return nil, dataLine, nil, errors.New("have error in stream")
+			return nil, dataLine, nil, &sseStreamErrorEventError{RawData: dataLine}
 		}
 
 		if dataLine == "" {
@@ -8213,6 +8718,9 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 		Usage ClaudeUsage `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			return nil, s.invalidNonStreamingJSONFailoverError(ctx, resp, account, body, err, mappedModel)
+		}
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
@@ -9479,10 +9987,10 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 	}
 
 	// 检测 thinking block 签名错误（400）并重试一次（过滤 thinking blocks）
-	if resp.StatusCode == 400 && s.shouldRectifySignatureError(ctx, account, respBody) {
+	if resp.StatusCode == 400 && s.shouldRectifySignatureError(ctx, account, respBody, reqModel) {
 		logger.LegacyPrintf("service.gateway", "Account %d: detected thinking block signature error on count_tokens, retrying with filtered thinking blocks", account.ID)
 
-		filteredBody := FilterThinkingBlocksForRetry(body)
+		filteredBody := FilterThinkingBlocksForRetry(body, reqModel)
 		retryReq, retryWireBody, buildErr := s.buildCountTokensRequest(ctx, c, account, filteredBody, token, tokenType, reqModel, shouldMimicClaudeCode)
 		if buildErr == nil {
 			retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
@@ -9768,9 +10276,9 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 
 	// OAuth 账号：应用统一指纹和重写 userID（受设置开关控制）
 	// 如果启用了会话ID伪装，会在重写后替换 session 部分为固定值
-	ctEnableFP, ctEnableMPT, ctEnableCCH := true, false, false
+	ctEnableFP, ctEnableMPT := true, false
 	if s.settingService != nil {
-		ctEnableFP, ctEnableMPT, ctEnableCCH = s.settingService.GetGatewayForwardingSettings(ctx)
+		ctEnableFP, ctEnableMPT, _ = s.settingService.GetGatewayForwardingSettings(ctx)
 	}
 	var ctFingerprint *Fingerprint
 	if account.IsOAuth() && s.identityService != nil {
@@ -9805,9 +10313,6 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 		body = sanitized
 	}
 
-	if ctEnableCCH {
-		body = signBillingHeaderCCH(body)
-	}
 	body = sanitizeCountTokensRequestBody(body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
@@ -9995,6 +10500,14 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 
 	// If no account has model_mapping, return nil (use default)
 	if !hasAnyMapping {
+		if platform == PlatformOpenAI {
+			models := filterDefaultOpenAIModelsByAccounts(accounts)
+			if s.modelsListCache != nil {
+				s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)
+				modelsListCacheStoreTotal.Add(1)
+			}
+			return cloneStringSlice(models)
+		}
 		if s.modelsListCache != nil {
 			s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
 			modelsListCacheStoreTotal.Add(1)
@@ -10014,6 +10527,30 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		modelsListCacheStoreTotal.Add(1)
 	}
 	return cloneStringSlice(models)
+}
+
+func filterDefaultOpenAIModelsByAccounts(accounts []Account) []string {
+	ids := openai.DefaultModelIDs()
+	filtered := make([]string, 0, len(ids))
+	for _, modelID := range ids {
+		if IsOpenAIDefaultModelSupportedByAnyAccount(modelID, accounts) {
+			filtered = append(filtered, modelID)
+		}
+	}
+	return filtered
+}
+
+// IsOpenAIDefaultModelSupportedByAnyAccount 判断默认 OpenAI 模型是否应对当前账号池暴露。
+func IsOpenAIDefaultModelSupportedByAnyAccount(modelID string, accounts []Account) bool {
+	if len(accounts) == 0 {
+		return true
+	}
+	for i := range accounts {
+		if accounts[i].IsModelSupported(modelID) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *GatewayService) InvalidateAvailableModelsCache(groupID *int64, platform string) {
