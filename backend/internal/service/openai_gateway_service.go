@@ -655,6 +655,13 @@ func (s *OpenAIGatewayService) isOpenAIAccountSelectable(account *Account, reque
 	return true
 }
 
+func isUngroupedOpenAIAccount(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	return len(account.GroupIDs) == 0 && len(account.Groups) == 0 && len(account.AccountGroups) == 0
+}
+
 // ReplaceModelInBody 替换请求体中的 JSON model 字段（通用 gjson/sjson 实现）。
 func (s *OpenAIGatewayService) ReplaceModelInBody(body []byte, newModel string) []byte {
 	return ReplaceModelInBody(body, newModel)
