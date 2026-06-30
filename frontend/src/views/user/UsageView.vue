@@ -146,7 +146,7 @@
 
       <template v-if="activeTab === 'usage'">
         <UsageTable
-          :data="usageLogs"
+          :data="usageTableRows"
           :loading="loading"
           :columns="visibleColumns"
           :server-side-sort="true"
@@ -205,6 +205,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { BILLING_MODE_IMAGE, getBillingModeLabel } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
+import type { OpsRequestDetail } from '@/api/admin/ops'
 import type {
   ApiKey,
   EndpointStat,
@@ -227,6 +228,13 @@ type EndpointSource = 'inbound' | 'upstream' | 'path'
 
 const usageStats = ref<UsageStatsResponse | null>(null)
 const usageLogs = ref<UsageLog[]>([])
+const usageTableRows = computed<OpsRequestDetail[]>(() =>
+  usageLogs.value.map((log) => ({
+    ...log,
+    kind: 'success',
+    status_code: null,
+  }))
+)
 const trendData = ref<TrendDataPoint[]>([])
 const requestedModelStats = ref<ModelStat[]>([])
 const groupStats = ref<GroupStat[]>([])
