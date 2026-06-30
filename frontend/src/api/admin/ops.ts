@@ -141,11 +141,11 @@ export interface OpsRequestDetail {
   group?: Group
 
   request_type?: string
-  service_tier?: string
-  reasoning_effort?: string
-  inbound_endpoint?: string
-  upstream_endpoint?: string
-  upstream_model?: string
+  service_tier?: string | null
+  reasoning_effort?: string | null
+  inbound_endpoint?: string | null
+  upstream_endpoint?: string | null
+  upstream_model?: string | null
   model_mapping_chain?: string | null
 
   input_tokens?: number | null
