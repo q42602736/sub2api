@@ -1666,6 +1666,9 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 	if account == nil || !account.IsOpenAI() {
 		return false, openAIQuotaAutoPauseDecision{}
 	}
+	if openAIQuotaAutoPauseBypassed(ctx) {
+		return false, openAIQuotaAutoPauseDecision{}
+	}
 	// Per-account explicit-disable flags must take precedence over the global default.
 	// Without these, leaving the account threshold blank means "use global default",
 	// so an admin has no way to exempt a single account from auto-pause once a global
@@ -1855,12 +1858,28 @@ func readOpenAIQuotaUsedPercent(extra map[string]any, window string) float64 {
 }
 
 type openAIQuotaAutoPauseCtxKey struct{}
+type openAIQuotaAutoPauseBypassCtxKey struct{}
 
 func withOpenAIQuotaAutoPauseSettings(ctx context.Context, settings OpsOpenAIAccountQuotaAutoPauseSettings) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, openAIQuotaAutoPauseCtxKey{}, settings)
+}
+
+func withOpenAIQuotaAutoPauseBypass(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, openAIQuotaAutoPauseBypassCtxKey{}, true)
+}
+
+func openAIQuotaAutoPauseBypassed(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	bypassed, _ := ctx.Value(openAIQuotaAutoPauseBypassCtxKey{}).(bool)
+	return bypassed
 }
 
 func openAIQuotaAutoPauseSettingsFromContext(ctx context.Context) OpsOpenAIAccountQuotaAutoPauseSettings {
@@ -1875,7 +1894,11 @@ func (s *OpenAIGatewayService) withOpenAIQuotaAutoPauseContext(ctx context.Conte
 	if s == nil || s.settingService == nil {
 		return ctx
 	}
-	return withOpenAIQuotaAutoPauseSettings(ctx, s.settingService.GetOpenAIQuotaAutoPauseSettings(ctx))
+	ctx = withOpenAIQuotaAutoPauseSettings(ctx, s.settingService.GetOpenAIQuotaAutoPauseSettings(ctx))
+	if s.getOpenAIOverLimitModeSettings(ctx).enabled {
+		ctx = withOpenAIQuotaAutoPauseBypass(ctx)
+	}
+	return ctx
 }
 
 // prioritizeOpenAICompactAccounts re-orders a slice so that accounts with known
