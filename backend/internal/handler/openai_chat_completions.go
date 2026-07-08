@@ -184,7 +184,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		preserveStickyBinding := h.gatewayService.ShouldPreserveOpenAIStickyBindingAfterFailover(c.Request.Context(), failedAccountIDs)
+		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, preserveStickyBinding, reqLog)
 		if !acquired {
 			return
 		}

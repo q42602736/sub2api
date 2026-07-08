@@ -395,7 +395,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		preserveStickyBinding := h.gatewayService.ShouldPreserveOpenAIStickyBindingAfterFailover(c.Request.Context(), failedAccountIDs)
+		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, preserveStickyBinding, reqLog)
 		if !acquired {
 			return
 		}
@@ -858,7 +859,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		preserveStickyBinding := h.gatewayService.ShouldPreserveOpenAIStickyBindingAfterFailover(c.Request.Context(), failedAccountIDs)
+		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, preserveStickyBinding, reqLog)
 		if !acquired {
 			return
 		}
@@ -1132,6 +1134,7 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	selection *service.AccountSelectionResult,
 	reqStream bool,
 	streamStarted *bool,
+	preserveStickyBinding bool,
 	reqLog *zap.Logger,
 ) (func(), bool) {
 	if selection == nil || selection.Account == nil {
@@ -1162,8 +1165,12 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 		return nil, false
 	}
 	if fastAcquired {
-		if err := h.gatewayService.BindStickySession(ctx, groupID, sessionHash, account.ID); err != nil {
-			reqLog.Warn("openai.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+		if !preserveStickyBinding {
+			if err := h.gatewayService.BindStickySession(ctx, groupID, sessionHash, account.ID); err != nil {
+				reqLog.Warn("openai.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			}
+		} else {
+			reqLog.Debug("openai.preserve_sticky_binding_after_failover", zap.Int64("account_id", account.ID))
 		}
 		return wrapReleaseOnDone(ctx, fastReleaseFunc), true
 	}
@@ -1205,8 +1212,12 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 
 	// Slot acquired: no longer waiting in queue.
 	releaseWait()
-	if err := h.gatewayService.BindStickySession(ctx, groupID, sessionHash, account.ID); err != nil {
-		reqLog.Warn("openai.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+	if !preserveStickyBinding {
+		if err := h.gatewayService.BindStickySession(ctx, groupID, sessionHash, account.ID); err != nil {
+			reqLog.Warn("openai.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+		}
+	} else {
+		reqLog.Debug("openai.preserve_sticky_binding_after_failover", zap.Int64("account_id", account.ID))
 	}
 	return wrapReleaseOnDone(ctx, accountReleaseFunc), true
 }
@@ -1471,8 +1482,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			accountReleaseFunc = fastReleaseFunc
 		}
 		currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
-		if err := h.gatewayService.BindStickySession(ctx, apiKey.GroupID, sessionHash, account.ID); err != nil {
-			reqLog.Warn("openai.websocket_bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+		preserveStickyBinding := h.gatewayService.ShouldPreserveOpenAIStickyBindingAfterFailover(ctx, failedAccountIDs)
+		if !preserveStickyBinding {
+			if err := h.gatewayService.BindStickySession(ctx, apiKey.GroupID, sessionHash, account.ID); err != nil {
+				reqLog.Warn("openai.websocket_bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			}
+		} else {
+			reqLog.Debug("openai.websocket_preserve_sticky_binding_after_failover", zap.Int64("account_id", account.ID))
 		}
 
 		token, _, err := h.gatewayService.GetAccessToken(ctx, account)

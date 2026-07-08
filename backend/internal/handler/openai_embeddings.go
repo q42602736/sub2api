@@ -151,7 +151,8 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		account := selection.Account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, accountAcquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &streamStarted, reqLog)
+		preserveStickyBinding := h.gatewayService.ShouldPreserveOpenAIStickyBindingAfterFailover(c.Request.Context(), failedAccountIDs)
+		accountReleaseFunc, accountAcquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &streamStarted, preserveStickyBinding, reqLog)
 		if !accountAcquired {
 			return
 		}

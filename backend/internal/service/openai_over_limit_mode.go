@@ -56,6 +56,10 @@ func (s *OpenAIGatewayService) IsOpenAIOverLimitModeEnabled(ctx context.Context)
 	return s.getOpenAIOverLimitModeSettings(ctx).enabled
 }
 
+func (s *OpenAIGatewayService) ShouldPreserveOpenAIStickyBindingAfterFailover(ctx context.Context, failedAccountIDs map[int64]struct{}) bool {
+	return len(failedAccountIDs) > 0 && s.IsOpenAIOverLimitModeEnabled(ctx)
+}
+
 func (s *OpenAIGatewayService) markOpenAIOverLimitCooldown(accountID int64, requestedModel string, cooldown time.Duration) {
 	if s == nil || accountID <= 0 || cooldown <= 0 {
 		return
