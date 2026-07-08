@@ -409,6 +409,10 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
 	}
+	if normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI &&
+		s.service.shouldSkipOpenAIStickyHitDuringOverLimitCooldown(ctx, account, req.RequestedModel) {
+		return nil, true, nil
+	}
 	if s.service.shouldClearOpenAIStickySession(ctx, account, req.RequestedModel) || account.Platform != normalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || (!account.IsOpenAI() && !account.IsSchedulable()) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
@@ -1775,6 +1779,8 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 			stickyAccountID = accountID
 		}
 	}
+	preserveStickyBinding = preserveStickyBinding ||
+		(platform == PlatformOpenAI && s.shouldPreserveOpenAIStickyBindingDuringOverLimitCooldown(ctx, stickyAccountID, requestedModel))
 	stickyWeighted := s.isOpenAIAdvancedSchedulerStickyWeightedEnabled(ctx)
 	subscriptionPriority := s.isOpenAIAdvancedSchedulerSubscriptionPriorityEnabled(ctx)
 	stickyPreviousAccountID := int64(0)
