@@ -331,7 +331,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			decision.StickyPreviousHit = true
 			decision.SelectedAccountID = selection.Account.ID
 			decision.SelectedAccountType = selection.Account.Type
-			if req.SessionHash != "" && !req.PreserveStickyBinding {
+			if req.SessionHash != "" && s.service.shouldBindOpenAIStickyToSelectedAccount(ctx, selection.Account, req.PreserveStickyBinding) {
 				_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, selection.Account.ID)
 			}
 			return selection, decision, nil
@@ -409,9 +409,13 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
 	}
-	if normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI &&
-		s.service.shouldSkipOpenAIStickyHitDuringOverLimitCooldown(ctx, account, req.RequestedModel) {
-		return nil, true, nil
+	if normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI {
+		if skip, deleteBinding := s.service.shouldSkipOpenAIStickyHitDuringOverLimitMode(ctx, account, req.RequestedModel); skip {
+			if deleteBinding {
+				_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+			}
+			return nil, true, nil
+		}
 	}
 	if s.service.shouldClearOpenAIStickySession(ctx, account, req.RequestedModel) || account.Platform != normalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || (!account.IsOpenAI() && !account.IsSchedulable()) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
@@ -755,6 +759,19 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			candidates = append(candidates, candidate)
 		}
 	}
+	if normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI &&
+		s.service != nil &&
+		s.service.getOpenAIOverLimitModeSettings(ctx).enabled {
+		preferred := make([]openAIAccountCandidateScore, 0, len(candidates))
+		for _, candidate := range candidates {
+			if s.service.isOpenAIOverLimitPreferredCandidate(ctx, candidate.account, req.RequestedModel) {
+				preferred = append(preferred, candidate)
+			}
+		}
+		if len(preferred) > 0 {
+			candidates = preferred
+		}
+	}
 
 	plan := openAIAccountLoadPlan{
 		allCandidates:             allCandidates,
@@ -1001,7 +1018,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 			return nil, compactBlocked, acquireErr
 		}
 		if result != nil && result.Acquired {
-			if req.SessionHash != "" && !req.PreserveStickyBinding {
+			if req.SessionHash != "" && s.service.shouldBindOpenAIStickyToSelectedAccount(ctx, fresh, req.PreserveStickyBinding) {
 				_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, fresh.ID)
 			}
 			return &AccountSelectionResult{
@@ -1057,7 +1074,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			return nil, acquireErr
 		}
 		if result != nil && result.Acquired {
-			if req.SessionHash != "" && !req.PreserveStickyBinding {
+			if req.SessionHash != "" && s.service.shouldBindOpenAIStickyToSelectedAccount(ctx, account, req.PreserveStickyBinding) {
 				_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, account.ID)
 			}
 			return &AccountSelectionResult{

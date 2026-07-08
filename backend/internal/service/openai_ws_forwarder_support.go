@@ -165,8 +165,9 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 	lease.MarkPrewarmed()
 	if prewarmResponseID != "" && stateStore != nil {
 		ttl := s.openAIWSResponseStickyTTL()
-		logOpenAIWSBindResponseAccountWarn(groupID, account.ID, prewarmResponseID, stateStore.BindResponseAccount(ctx, groupID, prewarmResponseID, account.ID, ttl))
-		stateStore.BindResponseConn(prewarmResponseID, lease.ConnID(), ttl)
+		if s.bindOpenAIWSResponseAccount(ctx, groupID, prewarmResponseID, account, stateStore, ttl) {
+			stateStore.BindResponseConn(prewarmResponseID, lease.ConnID(), ttl)
+		}
 	}
 	logOpenAIWSModeInfo(
 		"prewarm_done account_id=%d conn_id=%s response_id=%s events=%d terminal_events=%d duration_ms=%d",
@@ -320,12 +321,7 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 
 	result, acquireErr := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr == nil && result.Acquired {
-		logOpenAIWSBindResponseAccountWarn(
-			derefGroupID(groupID),
-			accountID,
-			responseID,
-			store.BindResponseAccount(ctx, derefGroupID(groupID), responseID, accountID, s.openAIWSResponseStickyTTL()),
-		)
+		s.bindOpenAIWSResponseAccount(ctx, derefGroupID(groupID), responseID, account, store, s.openAIWSResponseStickyTTL())
 		return &AccountSelectionResult{
 			Account:     account,
 			Acquired:    true,
@@ -402,6 +398,12 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if s.getOpenAIWSProtocolResolver().Resolve(account).Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
 		return 0, nil, "", nil
 	}
+	if skip, deleteBinding := s.shouldSkipOpenAIStickyHitDuringOverLimitMode(ctx, account, requestedModel); skip {
+		if deleteBinding {
+			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		}
+		return 0, nil, "", nil
+	}
 	if s.shouldClearOpenAIStickySession(ctx, account, requestedModel) || !account.IsOpenAI() {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return 0, nil, "", nil
@@ -427,6 +429,12 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		latest, latestErr := s.accountRepo.GetByID(ctx, account.ID)
 		if latestErr != nil || latest == nil {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+			return 0, nil, "", nil
+		}
+		if skip, deleteBinding := s.shouldSkipOpenAIStickyHitDuringOverLimitMode(ctx, latest, requestedModel); skip {
+			if deleteBinding {
+				_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+			}
 			return 0, nil, "", nil
 		}
 		if s.shouldClearOpenAIStickySession(ctx, latest, requestedModel) || !latest.IsOpenAI() {

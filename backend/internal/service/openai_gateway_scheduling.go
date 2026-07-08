@@ -630,8 +630,8 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 
 	// 4. 设置粘性会话绑定
 	// Set sticky session binding
-	if sessionHash != "" && !preserveStickyBinding {
-		_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, selected.ID, openaiStickySessionTTL)
+	if sessionHash != "" && s.shouldBindOpenAIStickyToSelectedAccount(ctx, hydrated, preserveStickyBinding) {
+		_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, hydrated.ID, openaiStickySessionTTL)
 	}
 
 	return hydrated, nil
@@ -665,8 +665,13 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 	if err != nil {
 		return nil
 	}
-	if platform == PlatformOpenAI && s.shouldSkipOpenAIStickyHitDuringOverLimitCooldown(ctx, account, requestedModel) {
-		return nil
+	if platform == PlatformOpenAI {
+		if skip, deleteBinding := s.shouldSkipOpenAIStickyHitDuringOverLimitMode(ctx, account, requestedModel); skip {
+			if deleteBinding {
+				_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+			}
+			return nil
+		}
 	}
 
 	// 检查账号是否需要清理粘性会话
@@ -717,8 +722,10 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	var selected *Account
 	selectedCompactTier := -1
+	selectedOverLimitPreferred := false
 	compactBlocked := false
 	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
+	preferOverLimit := platform == PlatformOpenAI && s.getOpenAIOverLimitModeSettings(ctx).enabled
 
 	for i := range accounts {
 		acc := &accounts[i]
@@ -751,9 +758,19 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 
 		// 选择优先级最高且最久未使用的账号
 		// Select highest priority and least recently used
+		overLimitPreferred := preferOverLimit && s.isOpenAIOverLimitPreferredCandidate(ctx, fresh, requestedModel)
 		if selected == nil {
 			selected = fresh
 			selectedCompactTier = compactTier
+			selectedOverLimitPreferred = overLimitPreferred
+			continue
+		}
+		if preferOverLimit && overLimitPreferred != selectedOverLimitPreferred {
+			if overLimitPreferred {
+				selected = fresh
+				selectedCompactTier = compactTier
+				selectedOverLimitPreferred = true
+			}
 			continue
 		}
 
@@ -762,6 +779,7 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 			if compactTier > selectedCompactTier {
 				selected = fresh
 				selectedCompactTier = compactTier
+				selectedOverLimitPreferred = overLimitPreferred
 			}
 			continue
 		}
@@ -769,6 +787,7 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 		if s.isBetterAccount(fresh, selected) {
 			selected = fresh
 			selectedCompactTier = compactTier
+			selectedOverLimitPreferred = overLimitPreferred
 		}
 	}
 
@@ -882,9 +901,16 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if accountID > 0 && !isExcluded(accountID) {
 			account, err := s.getSchedulableAccount(ctx, accountID)
 			if err == nil {
-				if platform == PlatformOpenAI && s.shouldSkipOpenAIStickyHitDuringOverLimitCooldown(ctx, account, requestedModel) {
-					// 超限模式的短 cooldown 只跳过本轮 sticky，不删除原绑定。
-				} else {
+				skipSticky := false
+				if platform == PlatformOpenAI {
+					if skip, deleteBinding := s.shouldSkipOpenAIStickyHitDuringOverLimitMode(ctx, account, requestedModel); skip {
+						skipSticky = true
+						if deleteBinding {
+							_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+						}
+					}
+				}
+				if !skipSticky {
 					clearSticky := s.shouldClearOpenAIStickySession(ctx, account, requestedModel)
 					if clearSticky {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1058,7 +1084,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if selectErr != nil {
 					return nil, true, selectErr
 				}
-				if sessionHash != "" && !preserveStickyBinding {
+				if sessionHash != "" && s.shouldBindOpenAIStickyToSelectedAccount(ctx, fresh, preserveStickyBinding) {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
 				return selection, true, nil
@@ -1092,7 +1118,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if selectErr != nil {
 					return nil, selectErr
 				}
-				if sessionHash != "" && !preserveStickyBinding {
+				if sessionHash != "" && s.shouldBindOpenAIStickyToSelectedAccount(ctx, fresh, preserveStickyBinding) {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
 				return selection, nil

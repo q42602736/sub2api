@@ -68,10 +68,68 @@ func (s *OpenAIGatewayService) shouldPreserveOpenAIStickyBindingDuringOverLimitC
 	return settings.enabled && s.isOpenAIAccountInOverLimitCooldown(accountID, requestedModel)
 }
 
-func (s *OpenAIGatewayService) shouldSkipOpenAIStickyHitDuringOverLimitCooldown(ctx context.Context, account *Account, requestedModel string) bool {
-	return account != nil &&
-		account.IsOpenAI() &&
-		s.shouldPreserveOpenAIStickyBindingDuringOverLimitCooldown(ctx, account.ID, requestedModel)
+func isOpenAIOverLimitPreferredAccountNow(account *Account) bool {
+	if account == nil || account.RateLimitResetAt == nil {
+		return false
+	}
+	return time.Now().Before(*account.RateLimitResetAt)
+}
+
+func (s *OpenAIGatewayService) isOpenAIOverLimitPreferredCandidate(ctx context.Context, account *Account, requestedModel string) bool {
+	if s == nil {
+		return false
+	}
+	if !isOpenAIOverLimitPreferredAccountNow(account) {
+		return false
+	}
+	return !s.isOpenAIAccountInOverLimitCooldown(account.ID, requestedModel)
+}
+
+func (s *OpenAIGatewayService) shouldBindOpenAIStickyToSelectedAccount(ctx context.Context, account *Account, preserveStickyBinding bool) bool {
+	if preserveStickyBinding {
+		return false
+	}
+	if s == nil || account == nil || !account.IsOpenAI() {
+		return true
+	}
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if !settings.enabled {
+		return true
+	}
+	return isOpenAIOverLimitPreferredAccountNow(account)
+}
+
+func (s *OpenAIGatewayService) shouldSkipOpenAIStickyHitDuringOverLimitMode(ctx context.Context, account *Account, requestedModel string) (skip bool, deleteBinding bool) {
+	if s == nil || account == nil || !account.IsOpenAI() {
+		return false, false
+	}
+	settings := s.getOpenAIOverLimitModeSettings(ctx)
+	if !settings.enabled {
+		return false, false
+	}
+	if s.isOpenAIAccountInOverLimitCooldown(account.ID, requestedModel) {
+		return true, false
+	}
+	if !isOpenAIOverLimitPreferredAccountNow(account) {
+		return true, true
+	}
+	return false, false
+}
+
+func (s *OpenAIGatewayService) bindOpenAIWSResponseAccount(ctx context.Context, groupID int64, responseID string, account *Account, store OpenAIWSStateStore, ttl time.Duration) bool {
+	if s == nil || account == nil || account.ID <= 0 || store == nil {
+		return false
+	}
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" {
+		return false
+	}
+	if !s.shouldBindOpenAIStickyToSelectedAccount(ctx, account, false) {
+		_ = store.DeleteResponseAccount(ctx, groupID, responseID)
+		return false
+	}
+	logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, store.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
+	return true
 }
 
 func (s *OpenAIGatewayService) markOpenAIOverLimitCooldown(accountID int64, requestedModel string, cooldown time.Duration) {

@@ -656,8 +656,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 	if responseID != "" && stateStore != nil {
 		ttl := s.openAIWSResponseStickyTTL()
-		logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, stateStore.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
-		stateStore.BindResponseConn(responseID, lease.ConnID(), ttl)
+		if s.bindOpenAIWSResponseAccount(ctx, groupID, responseID, account, stateStore, ttl) {
+			stateStore.BindResponseConn(responseID, lease.ConnID(), ttl)
+		}
 	}
 	if stateStore != nil && storeDisabled && sessionHash != "" {
 		stateStore.BindSessionConn(groupID, sessionHash, lease.ConnID(), s.openAIWSSessionStickyTTL())
