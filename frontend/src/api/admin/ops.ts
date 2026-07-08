@@ -5,7 +5,7 @@
  */
 
 import { apiClient, buildGatewayUrl } from '../client'
-import type { PaginatedResponse } from '@/types'
+import type { AdminUsageLog, PaginatedResponse, UsageRequestType } from '@/types'
 
 export type OpsQueryMode = 'auto' | 'raw' | 'preagg'
 
@@ -109,14 +109,10 @@ export type OpsRequestKind = 'success' | 'error'
 export type OpsRequestDetailsKind = OpsRequestKind | 'all'
 export type OpsRequestDetailsSort = 'created_at_desc' | 'duration_desc'
 
-export interface OpsRequestDetail {
+export interface OpsRequestDetail extends AdminUsageLog {
   kind: OpsRequestKind
-  created_at: string
-  request_id: string
 
   platform?: string
-  model?: string
-  duration_ms?: number | null
   status_code?: number | null
 
   error_id?: number | null
@@ -124,12 +120,10 @@ export interface OpsRequestDetail {
   severity?: string
   message?: string
 
-  user_id?: number | null
-  api_key_id?: number | null
-  account_id?: number | null
-  group_id?: number | null
-
-  stream?: boolean
+  user_email?: string
+  api_key_name?: string
+  account_name?: string
+  group_name?: string
 }
 
 export interface OpsRequestDetailsParams {
@@ -146,6 +140,7 @@ export interface OpsRequestDetailsParams {
   api_key_id?: number
   account_id?: number
 
+  request_type?: UsageRequestType
   model?: string
   request_id?: string
   q?: string
@@ -1173,8 +1168,14 @@ export async function listRequestErrorUpstreamErrors(
   return data
 }
 
-export async function listRequestDetails(params: OpsRequestDetailsParams): Promise<OpsRequestDetailsResponse> {
-  const { data } = await apiClient.get<OpsRequestDetailsResponse>('/admin/ops/requests', { params })
+export async function listRequestDetails(
+  params: OpsRequestDetailsParams,
+  options?: OpsRequestOptions
+): Promise<OpsRequestDetailsResponse> {
+  const { data } = await apiClient.get<OpsRequestDetailsResponse>('/admin/ops/requests', {
+    params,
+    signal: options?.signal
+  })
   return data
 }
 
