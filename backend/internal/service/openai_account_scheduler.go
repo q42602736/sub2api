@@ -409,18 +409,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
 	}
-	platform := normalizeOpenAICompatiblePlatform(req.Platform)
-	if s.service.shouldClearOpenAIStickySession(ctx, account, req.RequestedModel) || account.Platform != platform || !account.IsOpenAICompatible() {
-		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
-		return nil, false, nil
-	}
-	if account.IsOpenAI() {
-		settings := s.service.getOpenAIOverLimitModeSettings(ctx)
-		if !s.service.isOpenAIAccountSelectable(account, req.RequestedModel, settings) {
-			_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
-			return nil, false, nil
-		}
-	} else if !account.IsSchedulable() {
+	if s.service.shouldClearOpenAIStickySession(ctx, account, req.RequestedModel) || account.Platform != normalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || (!account.IsOpenAI() && !account.IsSchedulable()) {
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, false, nil
 	}
@@ -1116,16 +1105,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				continue
 			}
 		}
-		platform := normalizeOpenAICompatiblePlatform(req.Platform)
-		if account.Platform != platform || !account.IsOpenAICompatible() {
-			continue
-		}
-		if account.IsOpenAI() {
-			settings := s.service.getOpenAIOverLimitModeSettings(ctx)
-			if !s.service.isOpenAIAccountSelectable(account, req.RequestedModel, settings) {
-				continue
-			}
-		} else if !account.IsSchedulable() {
+		if !account.IsSchedulable() || account.Platform != normalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() {
 			continue
 		}
 		if s.service.isOpenAIAccountRuntimeBlocked(account) {
@@ -1726,15 +1706,6 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	platform = normalizeOpenAICompatiblePlatform(platform)
 	decision := OpenAIAccountScheduleDecision{}
-	if platform == PlatformOpenAI && s.IsOpenAIOverLimitModeEnabled(ctx) {
-		selection, err := s.SelectAccountWithPriorityOnly(ctx, groupID, platform, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact)
-		decision.Layer = openAIAccountScheduleLayerLoadBalance
-		if selection != nil && selection.Account != nil {
-			decision.SelectedAccountID = selection.Account.ID
-			decision.SelectedAccountType = selection.Account.Type
-		}
-		return selection, decision, err
-	}
 	scheduler := s.getOpenAIAccountScheduler(ctx)
 	if scheduler == nil {
 		decision.Layer = openAIAccountScheduleLayerLoadBalance

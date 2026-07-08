@@ -505,7 +505,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Default to openai.DefaultTestModel for OpenAI testing
 	testModelID := modelID
 	if testModelID == "" {
-		testModelID = defaultOpenAIAccountTestModel(account)
+		testModelID = openai.DefaultTestModel
 	}
 
 	// Align test routing with gateway behavior: OpenAI accounts apply normal
@@ -603,6 +603,13 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if isOAuth {
 		req.Host = "chatgpt.com"
 		req.Header.Set("accept", "text/event-stream")
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
+		req.Header.Set("Originator", "codex_cli_rs")
+		if customUA := strings.TrimSpace(credentialAccount.GetOpenAIUserAgent()); customUA != "" {
+			req.Header.Set("User-Agent", customUA)
+		} else {
+			req.Header.Set("User-Agent", codexCLIUserAgent)
+		}
 		setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
 	}
 
@@ -643,13 +650,6 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// Process SSE stream
 	return s.processOpenAIStream(c, resp.Body)
-}
-
-func defaultOpenAIAccountTestModel(account *Account) string {
-	if account != nil && account.IsOpenAIOAuth() && account.GetOpenAIPlanType() == "free" {
-		return "gpt-5.5"
-	}
-	return openai.DefaultTestModel
 }
 
 // testGrokAccountConnection tests a Grok OAuth account through xAI's Responses API.

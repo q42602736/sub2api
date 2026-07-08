@@ -1,15 +1,11 @@
+import type { UsageLog } from '@/types'
+
 type Translate = (key: string) => string
 
 // --- Image output token / cost helpers ---
 
-interface ImageOutputTokenRow {
-  output_tokens?: number | null
-  image_output_tokens?: number | null
-}
-
-interface ImageOutputCostRow {
-  image_output_cost?: number | null
-}
+type ImageOutputTokenRow = Pick<UsageLog, 'output_tokens' | 'image_output_tokens'>
+type ImageOutputCostRow = Pick<UsageLog, 'image_output_cost'>
 
 /** Whether the row contains any image-output tokens. */
 export const hasImageOutputTokens = (row: ImageOutputTokenRow | null | undefined): boolean =>
@@ -32,13 +28,7 @@ const knownImageSizeSources = new Set(['output', 'input', 'default', 'legacy'])
 const knownImageBillingSizes = new Set(['1K', '2K', '4K', 'mixed'])
 
 type ImageUsageRow = Pick<
-  {
-    image_size?: string | null
-    image_input_size?: string | null
-    image_output_size?: string | null
-    image_size_source?: string | null
-    image_size_breakdown?: Record<string, number> | null
-  },
+  UsageLog,
   'image_size' | 'image_input_size' | 'image_output_size' | 'image_size_source' | 'image_size_breakdown'
 >
 

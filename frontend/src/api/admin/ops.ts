@@ -5,7 +5,7 @@
  */
 
 import { apiClient, buildGatewayUrl } from '../client'
-import type { ApiKey, Group, ImageSizeSource, PaginatedResponse, UsageRequestType, User } from '@/types'
+import type { PaginatedResponse } from '@/types'
 
 export type OpsQueryMode = 'auto' | 'raw' | 'preagg'
 
@@ -125,59 +125,9 @@ export interface OpsRequestDetail {
   message?: string
 
   user_id?: number | null
-  user_email?: string
-  user?: User
   api_key_id?: number | null
-  api_key_name?: string
-  api_key?: ApiKey
   account_id?: number | null
-  account_name?: string
-  account?: {
-    id: number
-    name: string
-  }
   group_id?: number | null
-  group_name?: string
-  group?: Group
-
-  request_type?: string
-  service_tier?: string | null
-  reasoning_effort?: string | null
-  inbound_endpoint?: string | null
-  upstream_endpoint?: string | null
-  upstream_model?: string | null
-  model_mapping_chain?: string | null
-
-  input_tokens?: number | null
-  output_tokens?: number | null
-  cache_creation_tokens?: number | null
-  cache_read_tokens?: number | null
-  cache_creation_5m_tokens?: number | null
-  cache_creation_1h_tokens?: number | null
-
-  input_cost?: number | null
-  output_cost?: number | null
-  cache_creation_cost?: number | null
-  cache_read_cost?: number | null
-  total_cost?: number | null
-  actual_cost?: number | null
-  rate_multiplier?: number | null
-  account_rate_multiplier?: number | null
-  account_stats_cost?: number | null
-  billing_type?: number | null
-  billing_mode?: string | null
-  first_token_ms?: number | null
-  image_count?: number | null
-  image_size?: string | null
-  image_input_size?: string | null
-  image_output_size?: string | null
-  image_size_source?: ImageSizeSource | null
-  image_size_breakdown?: Record<string, number> | null
-  image_output_tokens?: number | null
-  image_output_cost?: number | null
-  user_agent?: string | null
-  ip_address?: string | null
-  cache_ttl_overridden?: boolean | null
 
   stream?: boolean
 }
@@ -195,7 +145,6 @@ export interface OpsRequestDetailsParams {
   user_id?: number
   api_key_id?: number
   account_id?: number
-  request_type?: UsageRequestType
 
   model?: string
   request_id?: string
@@ -1224,14 +1173,8 @@ export async function listRequestErrorUpstreamErrors(
   return data
 }
 
-export async function listRequestDetails(
-  params: OpsRequestDetailsParams,
-  options?: OpsRequestOptions
-): Promise<OpsRequestDetailsResponse> {
-  const { data } = await apiClient.get<OpsRequestDetailsResponse>('/admin/ops/requests', {
-    params,
-    signal: options?.signal
-  })
+export async function listRequestDetails(params: OpsRequestDetailsParams): Promise<OpsRequestDetailsResponse> {
+  const { data } = await apiClient.get<OpsRequestDetailsResponse>('/admin/ops/requests', { params })
   return data
 }
 

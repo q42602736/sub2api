@@ -1294,17 +1294,6 @@ func (a *Account) GetChatGPTAccountID() string {
 	return a.GetCredential("chatgpt_account_id")
 }
 
-func (a *Account) GetOpenAIPlanType() string {
-	if !a.IsOpenAIOAuth() {
-		return ""
-	}
-	planType := strings.TrimSpace(a.GetCredential("plan_type"))
-	if planType == "" {
-		planType = strings.TrimSpace(a.GetCredential("chatgpt_plan_type"))
-	}
-	return strings.ToLower(planType)
-}
-
 func (a *Account) IsChatGPTAccountFedRAMP() bool {
 	if !a.IsOpenAIOAuth() || a.Credentials == nil {
 		return false

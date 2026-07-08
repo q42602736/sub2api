@@ -1158,7 +1158,11 @@
                     <Select
                       :modelValue="rule.action"
                       @update:modelValue="
-                        rule.action = $event as 'pass' | 'filter' | 'block'
+                        rule.action = $event as
+                          | 'pass'
+                          | 'filter'
+                          | 'block'
+                          | 'force_priority'
                       "
                       :options="openaiFastPolicyActionOptions"
                     />
@@ -1297,6 +1301,7 @@
                         | 'pass'
                         | 'filter'
                         | 'block'
+                        | 'force_priority'
                     "
                     :options="openaiFastPolicyActionOptions"
                   />
@@ -4090,21 +4095,27 @@
                 </div>
               </div>
 
-              <div class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700">
+              <div
+                class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
+              >
                 <div>
-                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    {{ t("admin.settings.gatewayForwarding.openaiOverLimitMode") }}
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.scheduling.openaiOverLimitMode") }}
                   </label>
                   <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    {{ t("admin.settings.gatewayForwarding.openaiOverLimitModeHint") }}
+                    {{ t("admin.settings.scheduling.openaiOverLimitModeHint") }}
                   </p>
                 </div>
                 <Toggle v-model="form.openai_over_limit_mode_enabled" />
               </div>
 
               <div class="border-t border-gray-100 pt-5 dark:border-dark-700">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t("admin.settings.gatewayForwarding.openaiOverLimitCooldown") }}
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{ t("admin.settings.scheduling.openaiOverLimitCooldown") }}
                 </label>
                 <input
                   v-model.number="form.openai_over_limit_cooldown_seconds"
@@ -4114,17 +4125,21 @@
                   class="input mt-2 max-w-xs"
                 />
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {{ t("admin.settings.gatewayForwarding.openaiOverLimitCooldownHint") }}
+                  {{ t("admin.settings.scheduling.openaiOverLimitCooldownHint") }}
                 </p>
               </div>
 
-              <div class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700">
+              <div
+                class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
+              >
                 <div>
-                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    {{ t("admin.settings.gatewayForwarding.openaiOverLimitParallel") }}
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.scheduling.openaiOverLimitParallel") }}
                   </label>
                   <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    {{ t("admin.settings.gatewayForwarding.openaiOverLimitParallelHint") }}
+                    {{ t("admin.settings.scheduling.openaiOverLimitParallelHint") }}
                   </p>
                 </div>
                 <Toggle v-model="form.openai_over_limit_parallel_enabled" />
@@ -10166,6 +10181,10 @@ const openaiFastPolicyTierOptions = computed(() => [
 const openaiFastPolicyActionOptions = computed(() => [
   { value: "pass", label: t("admin.settings.openaiFastPolicy.actionPass") },
   { value: "filter", label: t("admin.settings.openaiFastPolicy.actionFilter") },
+  {
+    value: "force_priority",
+    label: t("admin.settings.openaiFastPolicy.actionForcePriority"),
+  },
   { value: "block", label: t("admin.settings.openaiFastPolicy.actionBlock") },
 ]);
 
