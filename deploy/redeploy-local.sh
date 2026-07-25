@@ -51,8 +51,13 @@ backup_deploy_dir() {
   ts="$(timestamp)"
   mkdir -p "$BACKUP_DIR"
   archive_path="${BACKUP_DIR}/sub2api-deploy-${ts}.tar.gz"
+  # PostgreSQL 和 Redis 为实时数据目录。PostgreSQL 由 backup_database 一致性备份；
+  # 运行中归档任一目录可能失败并产生不可用的文件系统快照，运行日志也无需备份。
   tar -czf "$archive_path" \
     --exclude='sub2api-deploy/backups' \
+    --exclude='sub2api-deploy/postgres_data' \
+    --exclude='sub2api-deploy/redis_data' \
+    --exclude='sub2api-deploy/data/logs' \
     -C "$(dirname "$DEPLOY_DIR")" \
     "$(basename "$DEPLOY_DIR")"
   printf '%s\n' "$archive_path"
