@@ -16,11 +16,11 @@ const (
 	openAIOAuth429StormWindow             = 10 * time.Second
 	openAIOAuth429StormThreshold          = 20
 	openAIOAuth429StormMaxAccountSwitches = 1
+	grokOAuth429MaxAccountAttempts        = 5
 )
 
-// OpenAIOAuth429FailoverState tracks the request-local follow-up budget after
-// the first Grok OAuth 429. Once that 429 occurs, exactly one different account
-// may be attempted; any failure from that follow-up account ends failover.
+// OpenAIOAuth429FailoverState 记录单次请求首次遇到 Grok OAuth 429 后的后续切换额度。
+// 首次 429 后最多尝试五个账号；第五个账号仍失败时终止切换。
 type OpenAIOAuth429FailoverState struct {
 	grokOAuth429FollowupPending bool
 }
@@ -347,10 +347,9 @@ func (s *OpenAIGatewayService) ShouldStopOpenAIOAuth429Failover(account *Account
 		return false
 	}
 	if state != nil && state.grokOAuth429FollowupPending {
-		// The follow-up budget was armed by a Grok OAuth 429. Consume it on
-		// any failing follow-up account, even if a mixed pool selected an API-key
-		// account next.
-		return true
+		// Grok OAuth 429 会启用后续切换额度：原账号加四个备用号。混合池中即使
+		// 切到 API-key 账号，也共享这一个请求的额度。
+		return failedSwitches >= grokOAuth429MaxAccountAttempts
 	}
 	if isGrokOAuthAccount(account) {
 		if state == nil {
