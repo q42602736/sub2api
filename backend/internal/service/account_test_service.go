@@ -774,7 +774,8 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 	defer func() { _ = resp.Body.Close() }()
 
 	now := time.Now()
-	snapshot := parseGrokQuotaSnapshot(resp.Header, resp.StatusCode, now)
+	// 手动测试成功即使没有额度响应头，也必须覆盖之前失败探测留下的快照。
+	snapshot := xai.ObserveQuotaHeaders(resp.Header, resp.StatusCode, "manual_test")
 	if snapshot != nil && s.accountRepo != nil {
 		resetAt, limited := grokRateLimitResetAtForAccount(account, snapshot, now)
 		if limited {

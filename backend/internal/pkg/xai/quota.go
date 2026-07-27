@@ -27,18 +27,21 @@ type QuotaWindow struct {
 }
 
 type QuotaSnapshot struct {
-	Requests          *QuotaWindow      `json:"requests,omitempty"`
-	Tokens            *QuotaWindow      `json:"tokens,omitempty"`
-	RetryAfterSeconds *int              `json:"retry_after_seconds,omitempty"`
-	SubscriptionTier  string            `json:"subscription_tier,omitempty"`
-	EntitlementStatus string            `json:"entitlement_status,omitempty"`
-	StatusCode        int               `json:"status_code,omitempty"`
-	Headers           map[string]string `json:"headers,omitempty"`
-	HeadersObserved   bool              `json:"headers_observed"`
-	ObservationSource string            `json:"observation_source,omitempty"`
-	LastProbeAt       string            `json:"last_probe_at,omitempty"`
-	LastHeadersSeenAt string            `json:"last_headers_seen_at,omitempty"`
-	UpdatedAt         string            `json:"updated_at"`
+	Requests           *QuotaWindow      `json:"requests,omitempty"`
+	Tokens             *QuotaWindow      `json:"tokens,omitempty"`
+	RetryAfterSeconds  *int              `json:"retry_after_seconds,omitempty"`
+	SubscriptionTier   string            `json:"subscription_tier,omitempty"`
+	EntitlementStatus  string            `json:"entitlement_status,omitempty"`
+	StatusCode         int               `json:"status_code,omitempty"`
+	Headers            map[string]string `json:"headers,omitempty"`
+	HeadersObserved    bool              `json:"headers_observed"`
+	ObservationSource  string            `json:"observation_source,omitempty"`
+	LastProbeAt        string            `json:"last_probe_at,omitempty"`
+	LastHeadersSeenAt  string            `json:"last_headers_seen_at,omitempty"`
+	FreeUsageExhausted bool              `json:"free_usage_exhausted,omitempty"`
+	FreeUsageActual    *int64            `json:"free_usage_actual,omitempty"`
+	FreeUsageLimit     *int64            `json:"free_usage_limit,omitempty"`
+	UpdatedAt          string            `json:"updated_at"`
 }
 
 func (s *QuotaSnapshot) HasObservedHeaders() bool {

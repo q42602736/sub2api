@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+// grokRateLimitRecoverySweeper 只清理已到期的 Grok OAuth 限流记录。
+// 保持为可选接口，避免把后台恢复能力扩散到所有账号仓储实现。
+type grokRateLimitRecoverySweeper interface {
+	RecoverExpiredGrokRateLimits(ctx context.Context, now time.Time) (int64, error)
+}
+
 // AccountExpiryService periodically pauses expired accounts when auto-pause is enabled.
 type AccountExpiryService struct {
 	accountRepo AccountRepository
@@ -60,12 +66,24 @@ func (s *AccountExpiryService) runOnce() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	updated, err := s.accountRepo.AutoPauseExpiredAccounts(ctx, time.Now())
+	now := time.Now()
+	updated, err := s.accountRepo.AutoPauseExpiredAccounts(ctx, now)
 	if err != nil {
 		log.Printf("[AccountExpiry] Auto pause expired accounts failed: %v", err)
+	} else if updated > 0 {
+		log.Printf("[AccountExpiry] Auto paused %d expired accounts", updated)
+	}
+
+	recoveryRepo, ok := s.accountRepo.(grokRateLimitRecoverySweeper)
+	if !ok {
 		return
 	}
-	if updated > 0 {
-		log.Printf("[AccountExpiry] Auto paused %d expired accounts", updated)
+	recovered, err := recoveryRepo.RecoverExpiredGrokRateLimits(ctx, now)
+	if err != nil {
+		log.Printf("[GrokQuotaRecovery] Recover expired rate limits failed: %v", err)
+		return
+	}
+	if recovered > 0 {
+		log.Printf("[GrokQuotaRecovery] Recovered %d expired Grok OAuth rate limits without active model probes", recovered)
 	}
 }

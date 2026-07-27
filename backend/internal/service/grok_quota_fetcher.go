@@ -121,7 +121,11 @@ func (f *GrokQuotaFetcher) BuildUsageInfo(account *Account) *UsageInfo {
 				usage.GrokEntitlementStatus = "forbidden"
 			}
 		case 429:
-			usage.ErrorCode = "rate_limited"
+			// 限流字段由到点恢复任务原子清除。保留最后一次 429 快照用于审计，
+			// 但已过期的旧快照不能继续把账号展示为限流中。
+			if account.RateLimitResetAt != nil && account.RateLimitResetAt.After(now) {
+				usage.ErrorCode = "rate_limited"
+			}
 		}
 	}
 	applyGrokCredentialUsageFallback(usage, account)
