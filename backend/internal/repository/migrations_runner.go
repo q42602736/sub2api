@@ -156,13 +156,12 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 		return err
 	}
 
-	// 获取所有 .sql 迁移文件并按文件名排序。
+	// 获取所有有效 SQL 迁移文件并按文件名排序。
 	// 命名规范：使用零填充数字前缀（如 001_init.sql, 002_add_users.sql）。
-	files, err := fs.Glob(fsys, "*.sql")
+	files, err := listMigrationSQLFiles(fsys)
 	if err != nil {
 		return fmt.Errorf("list migrations: %w", err)
 	}
-	sort.Strings(files) // 确保按文件名顺序执行迁移
 
 	for _, name := range files {
 		// 读取迁移文件内容
@@ -421,14 +420,13 @@ func tableExists(ctx context.Context, db migrationConnection, tableName string) 
 }
 
 func latestMigrationBaseline(fsys fs.FS) (string, string, string, error) {
-	files, err := fs.Glob(fsys, "*.sql")
+	files, err := listMigrationSQLFiles(fsys)
 	if err != nil {
 		return "", "", "", err
 	}
 	if len(files) == 0 {
 		return "baseline", "baseline", "", nil
 	}
-	sort.Strings(files)
 	name := files[len(files)-1]
 	contentBytes, err := fs.ReadFile(fsys, name)
 	if err != nil {
@@ -439,6 +437,25 @@ func latestMigrationBaseline(fsys fs.FS) (string, string, string, error) {
 	hash := hex.EncodeToString(sum[:])
 	version := strings.TrimSuffix(name, ".sql")
 	return version, version, hash, nil
+}
+
+func listMigrationSQLFiles(fsys fs.FS) ([]string, error) {
+	files, err := fs.Glob(fsys, "*.sql")
+	if err != nil {
+		return nil, err
+	}
+
+	valid := files[:0]
+	for _, name := range files {
+		// macOS 可在复制、压缩或外接存储时生成 ._* AppleDouble 资源叉文件。
+		// 它们不是迁移，必须在嵌入文件意外包含时跳过，避免启动执行垃圾 SQL。
+		if strings.HasPrefix(name, "._") {
+			continue
+		}
+		valid = append(valid, name)
+	}
+	sort.Strings(valid)
+	return valid, nil
 }
 
 func checksumSet(values ...string) map[string]struct{} {

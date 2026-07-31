@@ -151,6 +151,34 @@ func sanitizeGroupReasoningEffortPolicy(group *Group) {
 	group.ReasoningEffortMappings = mappings
 }
 
+// ApplyOpenAIGPT56LunaMaxReasoningEffort 仅升级 Codex UI 中配置了专用 max 规则的两个强度值。
+// 缺失或无关字段保持原样，其他模型仍使用上游默认行为。
+func ApplyOpenAIGPT56LunaMaxReasoningEffort(body []byte, model string) ([]byte, bool) {
+	if len(body) == 0 || normalizeKnownOpenAICodexModel(model) != "gpt-5.6-luna" {
+		return body, false
+	}
+
+	result := body
+	changed := false
+	for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
+		field := gjson.GetBytes(result, path)
+		if !field.Exists() || field.Type != gjson.String {
+			continue
+		}
+		current := NormalizeMaxReasoningEffort(field.String())
+		if current != "medium" && current != "xhigh" {
+			continue
+		}
+		updated, err := sjson.SetBytes(result, path, "max")
+		if err != nil {
+			continue
+		}
+		result = updated
+		changed = true
+	}
+	return result, changed
+}
+
 // ApplyOpenAIReasoningEffortPolicy applies one exact mapping and then caps
 // known effort levels. Omitted values remain untouched so upstream defaults
 // stay in control.

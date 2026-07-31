@@ -10,6 +10,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -892,6 +893,10 @@ type GatewayConfig struct {
 	// OpenAIHighEffortFirstOutputTimeoutSeconds: high/xhigh/max 推理的首个语义输出超时（秒）。
 	// 0 表示回退到 OpenAIFirstOutputTimeoutSeconds。
 	OpenAIHighEffortFirstOutputTimeoutSeconds int `mapstructure:"openai_high_effort_first_output_timeout_seconds"`
+	// OpenAIGPT56LunaMaxAPIKeyIDs: 允许将 gpt-5.6-luna 的 medium/xhigh 升级为 max 的 API Key ID，逗号分隔。
+	OpenAIGPT56LunaMaxAPIKeyIDs string `mapstructure:"openai_gpt56_luna_max_api_key_ids"`
+	// OpenAIGPT56LunaMaxAPIKeyIDSet 是启动时解析的 ID 集合，避免请求路径反复解析配置。
+	OpenAIGPT56LunaMaxAPIKeyIDSet map[int64]struct{} `mapstructure:"-"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
 	// TextMaxBodySize limits endpoints that cannot carry inline image/video payloads.
@@ -1035,6 +1040,8 @@ type GatewayOpenAIHTTP2Config struct {
 // GatewayOpenAIProxyStreamCircuitConfig controls the bounded, in-process
 // proxy-ID circuit used for incomplete OpenAI Responses SSE streams.
 type GatewayOpenAIProxyStreamCircuitConfig struct {
+	// Disabled: 完全关闭代理断流熔断（默认开启）。
+	Disabled bool `mapstructure:"disabled"`
 	// FailureThreshold: 统计窗口内多少次断流后隔离代理。
 	FailureThreshold int `mapstructure:"failure_threshold"`
 	// WindowSeconds: 断流统计窗口（秒）。
@@ -1755,6 +1762,11 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	cfg.Log.Environment = strings.TrimSpace(cfg.Log.Environment)
 	cfg.Log.StacktraceLevel = strings.ToLower(strings.TrimSpace(cfg.Log.StacktraceLevel))
 	cfg.Log.Output.FilePath = strings.TrimSpace(cfg.Log.Output.FilePath)
+	openAIGPT56LunaMaxAPIKeyIDSet, err := parsePositiveInt64Set(cfg.Gateway.OpenAIGPT56LunaMaxAPIKeyIDs)
+	if err != nil {
+		return nil, fmt.Errorf("gateway.openai_gpt56_luna_max_api_key_ids: %w", err)
+	}
+	cfg.Gateway.OpenAIGPT56LunaMaxAPIKeyIDSet = openAIGPT56LunaMaxAPIKeyIDSet
 	cfg.Gateway.ForcedCodexInstructionsTemplateFile = strings.TrimSpace(cfg.Gateway.ForcedCodexInstructionsTemplateFile)
 	if cfg.Gateway.ForcedCodexInstructionsTemplateFile != "" {
 		content, err := os.ReadFile(cfg.Gateway.ForcedCodexInstructionsTemplateFile)
@@ -2208,6 +2220,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_response_header_timeout", 0)
 	viper.SetDefault("gateway.openai_first_output_timeout_seconds", 0)
 	viper.SetDefault("gateway.openai_high_effort_first_output_timeout_seconds", 0)
+	viper.SetDefault("gateway.openai_gpt56_luna_max_api_key_ids", "")
 	viper.SetDefault("gateway.log_upstream_error_body", true)
 	viper.SetDefault("gateway.log_upstream_error_body_max_bytes", 2048)
 	viper.SetDefault("gateway.inject_beta_for_apikey", false)
@@ -2282,6 +2295,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_http2.fallback_error_threshold", 2)
 	viper.SetDefault("gateway.openai_http2.fallback_window_seconds", 60)
 	viper.SetDefault("gateway.openai_http2.fallback_ttl_seconds", 600)
+	viper.SetDefault("gateway.openai_proxy_stream_circuit.disabled", false)
 	viper.SetDefault("gateway.openai_proxy_stream_circuit.failure_threshold", 2)
 	viper.SetDefault("gateway.openai_proxy_stream_circuit.window_seconds", 60)
 	viper.SetDefault("gateway.openai_proxy_stream_circuit.ttl_seconds", 600)
@@ -3513,6 +3527,31 @@ func normalizeStringSlice(values []string) []string {
 		normalized = append(normalized, trimmed)
 	}
 	return normalized
+}
+
+func parsePositiveInt64Set(raw string) (map[int64]struct{}, error) {
+	values := make(map[int64]struct{})
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		value, err := strconv.ParseInt(item, 10, 64)
+		if err != nil || value <= 0 {
+			return nil, fmt.Errorf("must contain positive integer IDs")
+		}
+		values[value] = struct{}{}
+	}
+	return values, nil
+}
+
+// AllowsOpenAIGPT56LunaMax 判断 API Key 是否可使用仅限 gpt-5.6-luna 的推理强度升级规则。
+func (c GatewayConfig) AllowsOpenAIGPT56LunaMax(apiKeyID int64) bool {
+	if apiKeyID <= 0 {
+		return false
+	}
+	_, allowed := c.OpenAIGPT56LunaMaxAPIKeyIDSet[apiKeyID]
+	return allowed
 }
 
 func isWeakJWTSecret(secret string) bool {
