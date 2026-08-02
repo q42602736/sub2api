@@ -306,6 +306,11 @@ func isOpenAICompatibleAccountEligibleForRequest(ctx context.Context, account *A
 	if remaining := account.GetRateLimitRemainingTimeWithContext(ctx, requestedModel); remaining > 0 {
 		return false
 	}
+	// 分组利润控制：legacy 引擎的粘性/候选循环与 DB recheck 共用
+	// 本判定，任何 fallback 都不能把利润不合格账号重新放回候选。
+	if vetoed, _ := openAIProfitControlVetoReason(ctx, account); vetoed {
+		return false
+	}
 	return true
 }
 
@@ -703,7 +708,7 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 
 	// 4. 设置粘性会话绑定
 	// Set sticky session binding
-	if sessionHash != "" && s.shouldBindOpenAIStickyToSelectedAccount(ctx, hydrated, preserveStickyBinding) {
+	if sessionHash != "" && !gatewayProfitControlGateActive(ctx) && s.shouldBindOpenAIStickyToSelectedAccount(ctx, hydrated, preserveStickyBinding) {
 		_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, hydrated.ID, openaiStickySessionTTL)
 	}
 
@@ -895,7 +900,11 @@ func (s *OpenAIGatewayService) isBetterAccount(candidate, current *Account) bool
 
 // SelectAccountWithLoadAwareness selects an account with load-awareness and wait plan.
 func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*AccountSelectionResult, error) {
-	return s.selectAccountWithLoadAwareness(s.withOpenAIQuotaAutoPauseContext(ctx), groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs, false, "", false, true)
+	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
+	// 分组利润控制：legacy 公共入口同样装门，保证不经
+	// selectAccountWithScheduler 的调用方也无法绕过利润准入。
+	ctx = s.withOpenAIProfitControlGate(ctx, groupID)
+	return s.selectAccountWithLoadAwareness(ctx, groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs, false, "", false, true)
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, preserveStickyBinding bool, useUpstreamTokenCost bool) (*AccountSelectionResult, error) {
@@ -1163,7 +1172,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if selectErr != nil {
 					return nil, true, selectErr
 				}
-				if sessionHash != "" && s.shouldBindOpenAIStickyToSelectedAccount(ctx, fresh, preserveStickyBinding) {
+				if sessionHash != "" && !gatewayProfitControlGateActive(ctx) && s.shouldBindOpenAIStickyToSelectedAccount(ctx, fresh, preserveStickyBinding) {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
 				return selection, true, nil
@@ -1202,7 +1211,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if selectErr != nil {
 					return nil, selectErr
 				}
-				if sessionHash != "" && s.shouldBindOpenAIStickyToSelectedAccount(ctx, fresh, preserveStickyBinding) {
+				if sessionHash != "" && !gatewayProfitControlGateActive(ctx) && s.shouldBindOpenAIStickyToSelectedAccount(ctx, fresh, preserveStickyBinding) {
 					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
 				}
 				return selection, nil
@@ -1466,12 +1475,12 @@ func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *
 	if err != nil {
 		return nil, err
 	}
-	return &AccountSelectionResult{
+	return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 		Account:     hydrated,
 		Acquired:    acquired,
 		ReleaseFunc: release,
 		WaitPlan:    waitPlan,
-	}, nil
+	}), nil
 }
 
 func (s *OpenAIGatewayService) newAcquiredSelectionResult(ctx context.Context, account *Account, release func()) (*AccountSelectionResult, error) {
