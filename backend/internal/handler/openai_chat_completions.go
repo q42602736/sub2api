@@ -85,10 +85,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			body = upgradedBody
 		}
 	}
-	if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformOpenAI {
-		if cappedBody, changed := service.ApplyOpenAIReasoningEffortPolicy(body, apiKey.Group.MaxReasoningEffort, apiKey.Group.ReasoningEffortMappings); changed {
-			body = cappedBody
-		}
+	if cappedBody, changed := applyOpenAIReasoningEffortPolicyForRequest(c, apiKey, body); changed {
+		body = cappedBody
 	}
 	reqStream, ok := parseOpenAICompatibleStream(body)
 	if !ok {
