@@ -118,6 +118,12 @@ func explicitGrokCacheSeed(c *gin.Context, body []byte, explicitKey string) stri
 	if seed == "" {
 		seed = strings.TrimSpace(explicitKey)
 	}
+	// previous_response_id is last-resort: multi-turn Responses without an
+	// explicit session still share one cache identity (model is already in the
+	// isolated seed). Message ids are rejected by the seed helper.
+	if seed == "" && len(body) > 0 {
+		seed = grokPreviousResponseSessionSeed(body)
+	}
 	return seed
 }
 
@@ -298,6 +304,9 @@ func applyGrokFreeToolCacheRoute(body, intentSourceBody []byte, account *Account
 	return appendGrokFreeCacheNativeToolsWithPolicy(body, allowPureClientTools, allowFunctionSearch)
 }
 
+// isKnownGrokFreeAccount recognizes free-tier Grok accounts, used for
+// Free cache routing / media free_tier blocks (broader than soft-gate).
+// Soft-gate uses isExplicitGrokFreeOAuthAccount (exact "free" only).
 func isKnownGrokFreeAccount(account *Account) bool {
 	freeSignal, paidSignal, inferredFreeSignal := grokSubscriptionSignals(account)
 	// 明确的付费信号优先于推断出的 Free 信号，防止已升级账号的旧快照仍携带历史 200 万 Free 上限。
@@ -326,14 +335,12 @@ func grokSubscriptionSignals(account *Account) (freeSignal, paidSignal, inferred
 				paidSignal = true
 			}
 		}
+		// Usage % or a monthly dollar cap is evidence of a paid plan.
 		if billing.UsagePercent != nil || billing.UsedPercent != nil ||
 			(billing.MonthlyLimitCents != nil && *billing.MonthlyLimitCents > 0) {
 			paidSignal = true
 		}
-		// xAI deliberately reports an empty plan for Free accounts; only paid
-		// subscriptions receive a SuperGrok plan/monthly limit. A successful
-		// monthly billing observation with no paid signal is therefore positive
-		// Free evidence, not an unknown tier. Keep partial probes fail-closed.
+		// Empty plan + successful monthly observation → inferred free (no paid plan/limit).
 		if strings.TrimSpace(billing.MonthlyUpdatedAt) != "" ||
 			(billing.StatusCode >= http.StatusOK && billing.StatusCode < http.StatusMultipleChoices &&
 				!billing.Partial && len(billing.FailedWindows) == 0) {
@@ -353,6 +360,7 @@ func grokSubscriptionSignals(account *Account) (freeSignal, paidSignal, inferred
 			inferredFreeSignal = true
 		}
 	}
+	// Only credentials subscription_tier is authoritative here (not plan_type / extra keys).
 	if tier := strings.TrimSpace(account.GetCredential("subscription_tier")); tier != "" {
 		if isGrokFreeSubscriptionTier(tier) {
 			freeSignal = true

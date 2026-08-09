@@ -15,6 +15,7 @@ const (
 	grokImportProbeTimeout     = 25 * time.Second
 	grokImportProbeMaxAttempts = 2
 	grokImportProbeRetryDelay  = 8 * time.Second
+	grokImportProbeQueueLimit  = 64
 )
 
 type grokImportProber interface {
@@ -30,6 +31,8 @@ type grokImportProbeTask struct {
 type grokImportProbeScheduler struct {
 	mu          sync.Mutex
 	queue       []grokImportProbeTask
+	pending     map[int64]struct{}
+	inFlight    map[int64]struct{}
 	concurrency int
 	workers     int
 	maxWorkers  int
@@ -51,6 +54,8 @@ func newGrokImportProbeScheduler(concurrency int, timeout time.Duration) *grokIm
 	return &grokImportProbeScheduler{
 		concurrency: concurrency,
 		timeout:     timeout,
+		pending:     make(map[int64]struct{}),
+		inFlight:    make(map[int64]struct{}),
 	}
 }
 
@@ -71,7 +76,21 @@ func (s *grokImportProbeScheduler) enqueue(task grokImportProbeTask) {
 	}
 
 	s.mu.Lock()
+	if _, exists := s.pending[task.accountID]; exists {
+		s.mu.Unlock()
+		return
+	}
+	if _, exists := s.inFlight[task.accountID]; exists {
+		s.mu.Unlock()
+		return
+	}
+	if len(s.queue) >= grokImportProbeQueueLimit {
+		s.mu.Unlock()
+		slog.Debug("grok_import_active_probe_dropped", "account_id", task.accountID, "reason", "queue_full")
+		return
+	}
 	s.queue = append(s.queue, task)
+	s.pending[task.accountID] = struct{}{}
 	if s.workers < s.concurrency {
 		s.workers++
 		if s.workers > s.maxWorkers {
@@ -89,6 +108,7 @@ func (s *grokImportProbeScheduler) worker() {
 			return
 		}
 		s.run(task)
+		s.finish(task.accountID)
 	}
 }
 
@@ -105,7 +125,15 @@ func (s *grokImportProbeScheduler) nextTask() (grokImportProbeTask, bool) {
 	if len(s.queue) == 0 {
 		s.queue = nil
 	}
+	delete(s.pending, task.accountID)
+	s.inFlight[task.accountID] = struct{}{}
 	return task, true
+}
+
+func (s *grokImportProbeScheduler) finish(accountID int64) {
+	s.mu.Lock()
+	delete(s.inFlight, accountID)
+	s.mu.Unlock()
 }
 
 func (s *grokImportProbeScheduler) run(task grokImportProbeTask) {
@@ -120,8 +148,6 @@ func (s *grokImportProbeScheduler) run(task grokImportProbeTask) {
 		}
 	}()
 
-	// Queue time is intentionally excluded: every imported account is probed,
-	// while this timeout only bounds the actual upstream probe execution.
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 	defer cancel()
 	result, err := task.prober.QueryQuota(ctx, task.accountID)
