@@ -31,21 +31,27 @@ type QuotaWindow struct {
 }
 
 type QuotaSnapshot struct {
-	Requests           *QuotaWindow      `json:"requests,omitempty"`
-	Tokens             *QuotaWindow      `json:"tokens,omitempty"`
-	RetryAfterSeconds  *int              `json:"retry_after_seconds,omitempty"`
-	SubscriptionTier   string            `json:"subscription_tier,omitempty"`
-	EntitlementStatus  string            `json:"entitlement_status,omitempty"`
-	StatusCode         int               `json:"status_code,omitempty"`
-	Headers            map[string]string `json:"headers,omitempty"`
-	HeadersObserved    bool              `json:"headers_observed"`
-	ObservationSource  string            `json:"observation_source,omitempty"`
-	LastProbeAt        string            `json:"last_probe_at,omitempty"`
-	LastHeadersSeenAt  string            `json:"last_headers_seen_at,omitempty"`
-	FreeUsageExhausted bool              `json:"free_usage_exhausted,omitempty"`
-	FreeUsageActual    *int64            `json:"free_usage_actual,omitempty"`
-	FreeUsageLimit     *int64            `json:"free_usage_limit,omitempty"`
-	UpdatedAt          string            `json:"updated_at"`
+	Requests          *QuotaWindow      `json:"requests,omitempty"`
+	Tokens            *QuotaWindow      `json:"tokens,omitempty"`
+	RetryAfterSeconds *int              `json:"retry_after_seconds,omitempty"`
+	SubscriptionTier  string            `json:"subscription_tier,omitempty"`
+	EntitlementStatus string            `json:"entitlement_status,omitempty"`
+	StatusCode        int               `json:"status_code,omitempty"`
+	Headers           map[string]string `json:"headers,omitempty"`
+	HeadersObserved   bool              `json:"headers_observed"`
+	ObservationSource string            `json:"observation_source,omitempty"`
+	LastProbeAt       string            `json:"last_probe_at,omitempty"`
+	LastHeadersSeenAt string            `json:"last_headers_seen_at,omitempty"`
+	UpdatedAt         string            `json:"updated_at"`
+	// Model is the upstream id that produced these rate-limit headers.
+	Model string `json:"model,omitempty"`
+	// PlanFrom45Responses is inferred from a grok-4.5 Responses window
+	// (8300/53M = Heavy). Carried across later non-4.5 overwrites.
+	PlanFrom45Responses   string `json:"plan_from_45_responses,omitempty"`
+	PlanFrom45ResponsesAt string `json:"plan_from_45_responses_at,omitempty"`
+	FreeUsageExhausted    bool   `json:"free_usage_exhausted,omitempty"`
+	FreeUsageActual       *int64 `json:"free_usage_actual,omitempty"`
+	FreeUsageLimit        *int64 `json:"free_usage_limit,omitempty"`
 }
 
 func (s *QuotaSnapshot) HasObservedHeaders() bool {

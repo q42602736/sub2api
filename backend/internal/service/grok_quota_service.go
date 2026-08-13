@@ -181,6 +181,7 @@ func (s *GrokQuotaService) probeUsage(ctx context.Context, accountID int64) (*Gr
 		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
 		applyGrokFreeUsageExhaustion(snapshot, responseBody)
 	}
+	stampGrokQuotaSnapshotForPlan(account, snapshot, probeModel)
 	now := time.Now()
 	resetAt, limited := grokRateLimitResetAtForAccount(account, snapshot, now)
 	if localResetAt, ok := grokFreeRollingQuotaResetAt(ctx, s.usageLogRepo, account, snapshot, now); ok && localResetAt.After(resetAt) {
