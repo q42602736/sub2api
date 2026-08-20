@@ -80,7 +80,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
 		return
 	}
-	if h.cfg.Gateway.AllowsOpenAIGPT56LunaMax(apiKey.ID) {
+	if h.cfg != nil && h.cfg.Gateway.AllowsOpenAIGPT56LunaMax(apiKey.ID) {
 		if upgradedBody, changed := service.ApplyOpenAIGPT56LunaMaxReasoningEffort(body, reqModel); changed {
 			body = upgradedBody
 		}
