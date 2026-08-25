@@ -147,25 +147,6 @@ func (s *RateLimitService) notifyAccountSchedulingBlockCleared(accountID int64) 
 	s.runtimeBlocker.ClearAccountSchedulingBlock(accountID)
 }
 
-func (s *RateLimitService) shouldSkipOpenAI429RuntimeBlock(ctx context.Context, account *Account) bool {
-	if s == nil || s.settingService == nil || account == nil || account.Platform != PlatformOpenAI {
-		return false
-	}
-	enabled, _, _, err := s.settingService.GetOpenAIOverLimitModeSettings(ctx)
-	if err != nil {
-		slog.Warn("openai_over_limit_settings_read_failed", "account_id", account.ID, "error", err)
-		return false
-	}
-	return enabled
-}
-
-func (s *RateLimitService) notifyRateLimit429Blocked(ctx context.Context, account *Account, until time.Time, reason string) {
-	if s.shouldSkipOpenAI429RuntimeBlock(ctx, account) {
-		return
-	}
-	s.notifyAccountSchedulingBlocked(account, until, reason)
-}
-
 // ApplyAccountSchedulingThreshold evaluates admin-configured per-platform
 // utilization thresholds and, when breached, parks the account as temp-
 // unschedulable until the winning window resets. Returns true when the account
@@ -1129,7 +1110,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		s.persistOpenAICodexSnapshot(ctx, account, headers)
 		notifyOpenAIAutoReset(account.ID)
 		if resetAt := s.calculateOpenAI429ResetTime(headers); resetAt != nil {
-			s.notifyRateLimit429Blocked(ctx, account, *resetAt, "429")
+			s.notifyAccountSchedulingBlocked(account, *resetAt, "429")
 			if err := s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt); err != nil {
 				slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
 				return
@@ -1141,7 +1122,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 
 	// 2. Anthropic 平台：尝试解析 per-window 头（5h / 7d），选择实际触发的窗口
 	if result := calculateAnthropic429ResetTime(headers); result != nil {
-		s.notifyRateLimit429Blocked(ctx, account, result.resetAt, "429")
+		s.notifyAccountSchedulingBlocked(account, result.resetAt, "429")
 		if err := s.accountRepo.SetRateLimited(ctx, account.ID, result.resetAt); err != nil {
 			slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
 			return
@@ -1171,7 +1152,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			// 尝试解析 OpenAI 的 usage_limit_reached 错误
 			if resetAt := parseOpenAIRateLimitResetTime(responseBody); resetAt != nil {
 				resetTime := time.Unix(*resetAt, 0)
-				s.notifyRateLimit429Blocked(ctx, account, resetTime, "429")
+				s.notifyAccountSchedulingBlocked(account, resetTime, "429")
 				if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetTime); err != nil {
 					slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
 					return
@@ -1183,7 +1164,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			// 尝试解析 Gemini 格式（用于其他平台）
 			if resetAt := ParseGeminiRateLimitResetTime(responseBody); resetAt != nil {
 				resetTime := time.Unix(*resetAt, 0)
-				s.notifyRateLimit429Blocked(ctx, account, resetTime, "429")
+				s.notifyAccountSchedulingBlocked(account, resetTime, "429")
 				if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetTime); err != nil {
 					slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
 					return
@@ -1222,7 +1203,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 	resetAt := time.Unix(ts, 0)
 
 	// 标记限流状态
-	s.notifyRateLimit429Blocked(ctx, account, resetAt, "429")
+	s.notifyAccountSchedulingBlocked(account, resetAt, "429")
 	if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetAt); err != nil {
 		slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
 		return
@@ -1247,7 +1228,7 @@ func (s *RateLimitService) apply429FallbackRateLimit(ctx context.Context, accoun
 
 	resetAt := time.Now().Add(cooldown)
 	slog.Warn("rate_limit_429_fallback_used", "account_id", account.ID, "platform", account.Platform, "reason", reason, "using_default", cooldown.String())
-	s.notifyRateLimit429Blocked(ctx, account, resetAt, "429_fallback")
+	s.notifyAccountSchedulingBlocked(account, resetAt, "429_fallback")
 	if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetAt); err != nil {
 		slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
 	}

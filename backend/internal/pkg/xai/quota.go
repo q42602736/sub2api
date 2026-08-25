@@ -49,9 +49,6 @@ type QuotaSnapshot struct {
 	// (8300/53M = Heavy). Carried across later non-4.5 overwrites.
 	PlanFrom45Responses   string `json:"plan_from_45_responses,omitempty"`
 	PlanFrom45ResponsesAt string `json:"plan_from_45_responses_at,omitempty"`
-	FreeUsageExhausted    bool   `json:"free_usage_exhausted,omitempty"`
-	FreeUsageActual       *int64 `json:"free_usage_actual,omitempty"`
-	FreeUsageLimit        *int64 `json:"free_usage_limit,omitempty"`
 }
 
 func (s *QuotaSnapshot) HasObservedHeaders() bool {

@@ -308,14 +308,6 @@ func applyGrokFreeToolCacheRoute(body, intentSourceBody []byte, account *Account
 // Free cache routing / media free_tier blocks (broader than soft-gate).
 // Soft-gate uses isExplicitGrokFreeOAuthAccount (exact "free" only).
 func isKnownGrokFreeAccount(account *Account) bool {
-	freeSignal, paidSignal, inferredFreeSignal := grokSubscriptionSignals(account)
-	// 明确的付费信号优先于推断出的 Free 信号，防止已升级账号的旧快照仍携带历史 200 万 Free 上限。
-	return !paidSignal && (freeSignal || inferredFreeSignal)
-}
-
-// isGrokFreeQuotaCandidate 允许上游尚未返回订阅等级的新导入 OAuth 账号使用本地 Free 窗口恢复。
-// 任意付费信号都会排除该账号；调用方还必须确认真实 429 且本地滚动用量达到 Free 上限。
-func isGrokFreeQuotaCandidate(account *Account) bool {
 	if account == nil || !account.IsGrokOAuth() {
 		return false
 	}
@@ -324,17 +316,9 @@ func isGrokFreeQuotaCandidate(account *Account) bool {
 	if jwtTier := xai.SubscriptionTierFromJWT(account.GetCredential("access_token")); jwtTier != "" {
 		return isGrokFreeSubscriptionTier(jwtTier)
 	}
-	_, paidSignal, _ := grokSubscriptionSignals(account)
-	return !paidSignal
-}
-
-func grokSubscriptionSignals(account *Account) (freeSignal, paidSignal, inferredFreeSignal bool) {
-	if account == nil || !account.IsGrokOAuth() {
-		return false, false, false
-	}
-	freeSignal = false
-	paidSignal = false
-	inferredFreeSignal = false
+	freeSignal := false
+	paidSignal := false
+	inferredFreeSignal := false
 	if billing, err := grokBillingSnapshotFromExtra(account.Extra); err == nil && billing != nil {
 		if tier := strings.TrimSpace(billing.Plan); tier != "" {
 			if isGrokFreeSubscriptionTier(tier) {
@@ -376,7 +360,8 @@ func grokSubscriptionSignals(account *Account) (freeSignal, paidSignal, inferred
 			paidSignal = true
 		}
 	}
-	return freeSignal, paidSignal, inferredFreeSignal
+	// Explicit paid evidence always wins over an inferred Free signal.
+	return !paidSignal && (freeSignal || inferredFreeSignal)
 }
 
 func isGrokFreeSubscriptionTier(tier string) bool {

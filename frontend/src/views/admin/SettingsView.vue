@@ -5187,56 +5187,6 @@
                   </label>
                 </div>
               </div>
-
-              <div
-                class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
-              >
-                <div>
-                  <label
-                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
-                  >
-                    {{ t("admin.settings.scheduling.openaiOverLimitMode") }}
-                  </label>
-                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    {{ t("admin.settings.scheduling.openaiOverLimitModeHint") }}
-                  </p>
-                </div>
-                <Toggle v-model="form.openai_over_limit_mode_enabled" />
-              </div>
-
-              <div class="border-t border-gray-100 pt-5 dark:border-dark-700">
-                <label
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >
-                  {{ t("admin.settings.scheduling.openaiOverLimitCooldown") }}
-                </label>
-                <input
-                  v-model.number="form.openai_over_limit_cooldown_seconds"
-                  type="number"
-                  min="1"
-                  max="600"
-                  class="input mt-2 max-w-xs"
-                />
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {{ t("admin.settings.scheduling.openaiOverLimitCooldownHint") }}
-                </p>
-              </div>
-
-              <div
-                class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
-              >
-                <div>
-                  <label
-                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
-                  >
-                    {{ t("admin.settings.scheduling.openaiOverLimitParallel") }}
-                  </label>
-                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    {{ t("admin.settings.scheduling.openaiOverLimitParallelHint") }}
-                  </p>
-                </div>
-                <Toggle v-model="form.openai_over_limit_parallel_enabled" />
-              </div>
             </div>
           </div>
 
@@ -9529,9 +9479,6 @@ type SettingsForm = Omit<
   openai_low_upstream_rate_priority_enabled: boolean;
   openai_oauth_scheduling_rate_multiplier: number;
   openai_advanced_scheduler_enabled: boolean;
-  openai_over_limit_mode_enabled: boolean;
-  openai_over_limit_cooldown_seconds: number;
-  openai_over_limit_parallel_enabled: boolean;
   openai_advanced_scheduler_sticky_weighted_enabled: boolean;
   openai_advanced_scheduler_subscription_priority_enabled: boolean;
   openai_advanced_scheduler_lb_top_k: string;
@@ -9774,9 +9721,6 @@ const form = reactive<SettingsForm>({
   openai_low_upstream_rate_priority_enabled: false,
   openai_oauth_scheduling_rate_multiplier: 1,
   openai_advanced_scheduler_enabled: false,
-  openai_over_limit_mode_enabled: false,
-  openai_over_limit_cooldown_seconds: 15,
-  openai_over_limit_parallel_enabled: false,
   openai_advanced_scheduler_sticky_weighted_enabled: false,
   openai_advanced_scheduler_subscription_priority_enabled: false,
   openai_advanced_scheduler_lb_top_k: "",
@@ -11439,11 +11383,6 @@ async function saveSettings() {
       openai_oauth_scheduling_rate_multiplier:
         form.openai_oauth_scheduling_rate_multiplier,
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,
-      openai_over_limit_mode_enabled: form.openai_over_limit_mode_enabled,
-      openai_over_limit_cooldown_seconds:
-        Number(form.openai_over_limit_cooldown_seconds) || 15,
-      openai_over_limit_parallel_enabled:
-        form.openai_over_limit_parallel_enabled,
       openai_advanced_scheduler_sticky_weighted_enabled:
         form.openai_advanced_scheduler_sticky_weighted_enabled,
       openai_advanced_scheduler_subscription_priority_enabled:

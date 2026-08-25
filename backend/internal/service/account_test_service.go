@@ -1011,14 +1011,7 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(responseBody))
 	}
-	// Successful manual tests are recovery evidence even when Grok omits all
-	// quota headers; keep an empty observation so stale 403/429 snapshots clear.
-	var snapshot *xai.QuotaSnapshot
-	if resp.StatusCode >= http.StatusBadRequest {
-		snapshot = parseGrokQuotaSnapshot(resp.Header, resp.StatusCode, now)
-	} else {
-		snapshot = xai.ObserveQuotaHeaders(resp.Header, resp.StatusCode, "manual_test")
-	}
+	snapshot := parseGrokQuotaSnapshot(resp.Header, resp.StatusCode, now)
 	stampGrokQuotaSnapshotForPlan(account, snapshot, grokRequestedModelFromCtx(ctx))
 	if snapshot != nil && s.accountRepo != nil {
 		resetAt, limited := grokRateLimitResetAtForAccount(account, snapshot, now)

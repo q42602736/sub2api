@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -333,73 +332,6 @@ func (r *usageLogRepository) GetAccountWindowStats(ctx context.Context, accountI
 		return nil, err
 	}
 	return stats, nil
-}
-
-// GetGrokFreeQuotaResetAt 返回足够 Token 离开 Free 滚动 24 小时窗口的最早时间。
-func (r *usageLogRepository) GetGrokFreeQuotaResetAt(ctx context.Context, accountID int64, now time.Time, tokenLimit int64) (*time.Time, error) {
-	if accountID <= 0 || tokenLimit <= 0 {
-		return nil, nil
-	}
-
-	query := `
-		WITH window_logs AS (
-			SELECT
-				created_at,
-				SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens) AS tokens
-			FROM usage_logs
-			WHERE account_id = $1 AND created_at >= $2
-			GROUP BY created_at
-		),
-		ordered AS (
-			SELECT
-				created_at,
-				SUM(tokens) OVER (ORDER BY created_at ASC ROWS UNBOUNDED PRECEDING) AS expired_tokens,
-				SUM(tokens) OVER () AS total_tokens
-			FROM window_logs
-		)
-		SELECT created_at + INTERVAL '24 hours'
-		FROM ordered
-		WHERE total_tokens >= $3 AND expired_tokens > total_tokens - $3
-		ORDER BY created_at ASC
-		LIMIT 1
-	`
-
-	var resetAt time.Time
-	err := scanSingleRow(ctx, r.sql, query, []any{accountID, now.UTC().Add(-24 * time.Hour), tokenLimit}, &resetAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &resetAt, nil
-}
-
-// GetGrokFreeQuotaFirstUsageResetAt 返回滚动 Free 窗口中最早有 Token 用量的释放时间。
-func (r *usageLogRepository) GetGrokFreeQuotaFirstUsageResetAt(ctx context.Context, accountID int64, now time.Time) (*time.Time, error) {
-	if accountID <= 0 {
-		return nil, nil
-	}
-
-	query := `
-		SELECT created_at + INTERVAL '24 hours'
-		FROM usage_logs
-		WHERE account_id = $1
-			AND created_at >= $2
-			AND input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens > 0
-		ORDER BY created_at ASC
-		LIMIT 1
-	`
-
-	var resetAt time.Time
-	err := scanSingleRow(ctx, r.sql, query, []any{accountID, now.UTC().Add(-24 * time.Hour)}, &resetAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &resetAt, nil
 }
 
 // GetAccountWindowStatsBatch 批量获取同一窗口起点下多个账号的统计数据。

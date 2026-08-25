@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
+import type { Account } from '@/types'
 
 export interface OpenAITokenInfo {
   access_token?: string
@@ -26,6 +27,33 @@ export interface OpenAITokenInfo {
 }
 
 export type OpenAIOAuthPlatform = 'openai'
+
+export function getOpenAIAccountLoginHint(account?: Pick<Account, 'platform' | 'credentials' | 'extra'> | null): string {
+  if (!account || account.platform !== 'openai') return ''
+
+  const candidates = [account.credentials?.email, account.extra?.email]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim()
+    }
+  }
+  return ''
+}
+
+export function withOAuthLoginHint(authUrl: string, loginHint?: string): string {
+  const hint = loginHint?.trim()
+  if (!hint) return authUrl
+
+  try {
+    const url = new URL(authUrl)
+    if (!url.searchParams.has('login_hint')) {
+      url.searchParams.set('login_hint', hint)
+    }
+    return url.toString()
+  } catch {
+    return authUrl
+  }
+}
 
 export function useOpenAIOAuth() {
   const appStore = useAppStore()
@@ -51,7 +79,8 @@ export function useOpenAIOAuth() {
   // Generate auth URL for OpenAI OAuth
   const generateAuthUrl = async (
     proxyId?: number | null,
-    redirectUri?: string
+    redirectUri?: string,
+    loginHint?: string
   ): Promise<boolean> => {
     loading.value = true
     authUrl.value = ''
@@ -72,7 +101,7 @@ export function useOpenAIOAuth() {
         `${endpointPrefix}/generate-auth-url`,
         payload
       )
-      authUrl.value = response.auth_url
+      authUrl.value = withOAuthLoginHint(response.auth_url, loginHint)
       sessionId.value = response.session_id
       try {
         const parsed = new URL(response.auth_url)

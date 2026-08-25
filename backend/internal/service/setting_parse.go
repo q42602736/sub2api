@@ -170,14 +170,11 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeySMTPPort:                                  "587",
 		SettingKeySMTPUseTLS:                                "false",
 		// Model fallback defaults
-		SettingKeyEnableModelFallback:            "false",
-		SettingKeyFallbackModelAnthropic:         "claude-3-5-sonnet-20241022",
-		SettingKeyFallbackModelOpenAI:            "gpt-4o",
-		SettingKeyFallbackModelGemini:            "gemini-2.5-pro",
-		SettingKeyFallbackModelAntigravity:       "gemini-2.5-pro",
-		SettingKeyOpenAIOverLimitModeEnabled:     "false",
-		SettingKeyOpenAIOverLimitCooldownSeconds: "15",
-		SettingKeyOpenAIOverLimitParallelEnabled: "false",
+		SettingKeyEnableModelFallback:      "false",
+		SettingKeyFallbackModelAnthropic:   "claude-3-5-sonnet-20241022",
+		SettingKeyFallbackModelOpenAI:      "gpt-4o",
+		SettingKeyFallbackModelGemini:      "gemini-2.5-pro",
+		SettingKeyFallbackModelAntigravity: "gemini-2.5-pro",
 		// Identity patch defaults
 		SettingKeyEnableIdentityPatch: "true",
 		SettingKeyIdentityPatchPrompt: "",
@@ -910,9 +907,6 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
 	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
-	result.OpenAIOverLimitModeEnabled = settings[SettingKeyOpenAIOverLimitModeEnabled] == "true"
-	result.OpenAIOverLimitCooldownSeconds = normalizeOpenAIOverLimitCooldownSeconds(parseIntOrDefault(settings[SettingKeyOpenAIOverLimitCooldownSeconds], 15))
-	result.OpenAIOverLimitParallelEnabled = settings[SettingKeyOpenAIOverLimitParallelEnabled] == "true"
 	result.OpenAIAdvancedSchedulerStickyWeightedEnabled = settings[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] == "true"
 	result.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled = settings[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled] == "true"
 	result.OpenAIAdvancedSchedulerLBTopK = strings.TrimSpace(settings[SettingKeyOpenAIAdvancedSchedulerLBTopK])
@@ -1284,14 +1278,6 @@ func parseTablePreferences(defaultPageSizeRaw, optionsRaw string) (int, []int) {
 	}
 
 	return normalizeTablePreferences(defaultPageSize, options)
-}
-
-func parseIntOrDefault(raw string, defaultValue int) int {
-	value, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil {
-		return defaultValue
-	}
-	return value
 }
 
 func normalizeTablePreferences(defaultPageSize int, options []int) (int, []int) {

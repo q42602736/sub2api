@@ -8,8 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -31,10 +29,7 @@ const (
 	grokRateLimitSustainedCooldown         = 30 * time.Minute
 	grokRateLimitMaxAdaptiveCooldown       = time.Hour
 	grokRateLimitBackoffQuietPeriod        = time.Hour
-	grokFreeUsageExhaustedCode             = "subscription:free-usage-exhausted"
 )
-
-var grokFreeUsageTokenPattern = regexp.MustCompile(`(?i)tokens\s*\(actual/limit\)\s*:\s*(\d+)\s*/\s*(\d+)`)
 
 func (s *OpenAIGatewayService) forwardGrokResponses(
 	ctx context.Context,
@@ -1575,10 +1570,6 @@ func (s *OpenAIGatewayService) updateGrokUsageSnapshotWithRateLimit(ctx context.
 	accountID := account.ID
 	now := time.Now()
 	resetAt, hasActiveLimit := grokRateLimitResetAtForAccount(account, snapshot, now)
-	if localResetAt, ok := grokFreeRollingQuotaResetAt(ctx, s.usageLogRepo, account, snapshot, now); ok && localResetAt.After(resetAt) {
-		resetAt = localResetAt
-		hasActiveLimit = true
-	}
 	if hasActiveLimit {
 		normalizeGrokExhaustedWindowResets(snapshot, resetAt, now)
 	}
@@ -1627,90 +1618,6 @@ func (s *OpenAIGatewayService) updateGrokUsageSnapshotWithRateLimit(ctx context.
 	}
 }
 
-type grokFreeQuotaResetReader interface {
-	GetGrokFreeQuotaResetAt(ctx context.Context, accountID int64, now time.Time, tokenLimit int64) (*time.Time, error)
-}
-
-type grokFreeQuotaFirstUsageResetReader interface {
-	GetGrokFreeQuotaFirstUsageResetAt(ctx context.Context, accountID int64, now time.Time) (*time.Time, error)
-}
-
-func grokFreeRollingQuotaResetAt(ctx context.Context, usageLogRepo UsageLogRepository, account *Account, snapshot *xai.QuotaSnapshot, now time.Time) (time.Time, bool) {
-	if account == nil || snapshot == nil || snapshot.StatusCode != http.StatusTooManyRequests ||
-		grokSnapshotHasExplicitRateLimitBoundary(snapshot) || !isGrokFreeQuotaCandidate(account) {
-		return time.Time{}, false
-	}
-	reader, ok := usageLogRepo.(grokFreeQuotaResetReader)
-	if !ok {
-		return time.Time{}, false
-	}
-	resetAt, err := reader.GetGrokFreeQuotaResetAt(ctx, account.ID, now, grokFreeQuotaTokenLimit(account, snapshot))
-	if err != nil {
-		slog.Warn("grok_free_quota_reset_lookup_failed", "account_id", account.ID, "error", err)
-		return time.Time{}, false
-	}
-	if resetAt == nil || !resetAt.After(now) {
-		if !snapshot.FreeUsageExhausted {
-			return time.Time{}, false
-		}
-		firstUsageReader, ok := usageLogRepo.(grokFreeQuotaFirstUsageResetReader)
-		if !ok {
-			return time.Time{}, false
-		}
-		resetAt, err = firstUsageReader.GetGrokFreeQuotaFirstUsageResetAt(ctx, account.ID, now)
-		if err != nil {
-			slog.Warn("grok_free_quota_first_usage_reset_lookup_failed", "account_id", account.ID, "error", err)
-			return time.Time{}, false
-		}
-		if resetAt == nil || !resetAt.After(now) {
-			return time.Time{}, false
-		}
-	}
-	return *resetAt, true
-}
-
-func grokSnapshotHasExplicitRateLimitBoundary(snapshot *xai.QuotaSnapshot) bool {
-	if snapshot == nil {
-		return false
-	}
-	if snapshot.RetryAfterSeconds != nil && *snapshot.RetryAfterSeconds > 0 {
-		return true
-	}
-	for _, window := range []*xai.QuotaWindow{snapshot.Requests, snapshot.Tokens} {
-		if window != nil && (window.ResetUnix != nil || strings.TrimSpace(window.ResetAt) != "") {
-			return true
-		}
-	}
-	return false
-}
-
-func grokFreeQuotaTokenLimit(account *Account, current *xai.QuotaSnapshot) int64 {
-	for _, snapshot := range []*xai.QuotaSnapshot{current, grokStoredQuotaSnapshot(account)} {
-		if snapshot == nil {
-			continue
-		}
-		if snapshot.FreeUsageLimit != nil && xai.IsGrokFreeRolling24hTokenLimit(*snapshot.FreeUsageLimit) {
-			return *snapshot.FreeUsageLimit
-		}
-		if snapshot.Tokens != nil && snapshot.Tokens.Limit != nil &&
-			xai.IsGrokFreeRolling24hTokenLimit(*snapshot.Tokens.Limit) {
-			return *snapshot.Tokens.Limit
-		}
-	}
-	return xai.GrokFreeRolling24hTokenLimit
-}
-
-func grokStoredQuotaSnapshot(account *Account) *xai.QuotaSnapshot {
-	if account == nil {
-		return nil
-	}
-	snapshot, err := grokQuotaSnapshotFromExtra(account.Extra)
-	if err != nil {
-		return nil
-	}
-	return snapshot
-}
-
 func (s *OpenAIGatewayService) updateGrokUsageFromResponse(ctx context.Context, account *Account, headers http.Header, statusCode int) {
 	snapshot := parseGrokQuotaSnapshot(headers, statusCode, time.Now())
 	if snapshot != nil {
@@ -1736,36 +1643,6 @@ func parseGrokQuotaSnapshot(headers http.Header, statusCode int, now time.Time) 
 		}
 	}
 	return snapshot
-}
-
-func applyGrokFreeUsageExhaustion(snapshot *xai.QuotaSnapshot, responseBody []byte) {
-	if snapshot == nil || len(responseBody) == 0 {
-		return
-	}
-	code := strings.TrimSpace(gjson.GetBytes(responseBody, "code").String())
-	if code == "" {
-		code = strings.TrimSpace(gjson.GetBytes(responseBody, "error.code").String())
-	}
-	if !strings.EqualFold(code, grokFreeUsageExhaustedCode) {
-		return
-	}
-	snapshot.FreeUsageExhausted = true
-	message := strings.TrimSpace(gjson.GetBytes(responseBody, "error").String())
-	if message == "" {
-		message = strings.TrimSpace(gjson.GetBytes(responseBody, "error.message").String())
-	}
-	matches := grokFreeUsageTokenPattern.FindStringSubmatch(message)
-	if len(matches) != 3 {
-		return
-	}
-	actual, actualErr := strconv.ParseInt(matches[1], 10, 64)
-	limit, limitErr := strconv.ParseInt(matches[2], 10, 64)
-	if actualErr == nil && actual >= 0 {
-		snapshot.FreeUsageActual = &actual
-	}
-	if limitErr == nil && xai.IsGrokFreeRolling24hTokenLimit(limit) {
-		snapshot.FreeUsageLimit = &limit
-	}
 }
 
 func normalizeGrokExhaustedWindowResets(snapshot *xai.QuotaSnapshot, resetAt, now time.Time) {
@@ -2083,9 +1960,6 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 	now := time.Now()
 	decision := classifyGrokUpstreamFailure(statusCode, responseBody, grokRequestedModelFromCtx(ctx))
 	snapshot := parseGrokQuotaSnapshot(headers, statusCode, now)
-	if statusCode == http.StatusTooManyRequests {
-		applyGrokFreeUsageExhaustion(snapshot, responseBody)
-	}
 	stampGrokQuotaSnapshotForPlan(account, snapshot, grokRequestedModelFromCtx(ctx))
 	// Capacity 429 is model pressure, not account quota exhaustion. Keep the
 	// snapshot for observability but do not install account-level rate limiting;
@@ -2118,6 +1992,7 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 			}
 		}
 	}
+
 	if statusCode == http.StatusForbidden && s.applyGrokForbiddenPolicy(ctx, account, responseBody) {
 		return
 	}

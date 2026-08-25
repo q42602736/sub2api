@@ -421,8 +421,8 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			decision.StickyPreviousHit = true
 			decision.SelectedAccountID = selection.Account.ID
 			decision.SelectedAccountType = selection.Account.Type
-			if req.SessionHash != "" && !gatewayProfitControlGateActive(ctx) && s.service.shouldBindOpenAIStickyToSelectedAccount(ctx, selection.Account, req.PreserveStickyBinding) {
-				_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, selection.Account.ID)
+			if req.SessionHash != "" {
+				_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, selection.Account.ID)
 			}
 			return selection, decision, nil
 		}
@@ -521,15 +521,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		clearBinding()
 		return nil, false, nil
 	}
-	if normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI {
-		if skip, deleteBinding := s.service.shouldSkipOpenAIStickyHitDuringOverLimitMode(ctx, account, req.RequestedModel); skip {
-			if deleteBinding {
-				_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
-			}
-			return nil, true, nil
-		}
-	}
-	if s.service.shouldClearOpenAIStickySession(ctx, account, req.RequestedModel) || account.Platform != normalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || (!account.IsOpenAI() && !account.IsSchedulable()) {
+	if shouldClearStickySession(account, req.RequestedModel) || account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || !account.IsSchedulable() {
 		clearBinding()
 		return nil, false, nil
 	}
@@ -893,19 +885,6 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			candidates = append(candidates, candidate)
 		}
 	}
-	if normalizeOpenAICompatiblePlatform(req.Platform) == PlatformOpenAI &&
-		s.service != nil &&
-		s.service.getOpenAIOverLimitModeSettings(ctx).enabled {
-		preferred := make([]openAIAccountCandidateScore, 0, len(candidates))
-		for _, candidate := range candidates {
-			if s.service.isOpenAIOverLimitPreferredCandidate(ctx, candidate.account, req.RequestedModel) {
-				preferred = append(preferred, candidate)
-			}
-		}
-		if len(preferred) > 0 {
-			candidates = preferred
-		}
-	}
 
 	plan := openAIAccountLoadPlan{
 		allCandidates:             allCandidates,
@@ -1231,6 +1210,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			release(result)
 			continue
 		}
+
 		if fresh.Concurrency != candidate.account.Concurrency {
 			release(result)
 			result, attempted, acquireErr = s.tryAcquireOpenAIAccountSlot(ctx, fresh.ID, fresh.Concurrency, budget)
@@ -1244,8 +1224,8 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 				continue
 			}
 		}
-		if req.SessionHash != "" && !gatewayProfitControlGateActive(ctx) && s.service.shouldBindOpenAIStickyToSelectedAccount(ctx, fresh, req.PreserveStickyBinding) {
-			_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, fresh.ID)
+		if req.SessionHash != "" && !req.PreserveStickyBinding {
+			_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, fresh.ID)
 		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account:     fresh,
@@ -1335,8 +1315,8 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			return nil, acquireErr
 		}
 		if result != nil && result.Acquired {
-			if req.SessionHash != "" && !gatewayProfitControlGateActive(ctx) && s.service.shouldBindOpenAIStickyToSelectedAccount(ctx, account, req.PreserveStickyBinding) {
-				_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, account.ID)
+			if req.SessionHash != "" && !req.PreserveStickyBinding {
+				_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, account.ID)
 			}
 			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 				Account:     account,
@@ -2257,7 +2237,6 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		ctx = s.withOpenAIProfitControlGate(ctx, groupID)
 	}
 	platform = NormalizeOpenAICompatiblePlatform(platform)
-	preserveStickyBinding := platform == PlatformOpenAI && s.ShouldPreserveOpenAIStickyBindingAfterFailover(ctx, excludedIDs)
 	decision := OpenAIAccountScheduleDecision{}
 	preserveGuardianParentBinding := preserveOpenAIGuardianParentBinding(ctx, sessionHash)
 	guardianParentAccountID := int64(0)
@@ -2304,7 +2283,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		if requiredTransport == OpenAIUpstreamTransportAny || requiredTransport == OpenAIUpstreamTransportHTTPSSE {
 			effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
 			for {
-				selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, legacySessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, preserveStickyBinding, useUpstreamTokenCost)
+				selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, legacySessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
 				if err != nil {
 					return nil, decision, err
 				}
@@ -2329,7 +2308,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 
 		effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
 		for {
-			selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, legacySessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, preserveStickyBinding, useUpstreamTokenCost)
+			selection, err := s.selectAccountWithLoadAwareness(ctx, groupID, platform, legacySessionHash, requestedModel, effectiveExcludedIDs, requireCompact, requiredCapability, useUpstreamTokenCost)
 			if err != nil {
 				return nil, decision, err
 			}
@@ -2366,8 +2345,6 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 			stickyAccountID = accountID
 		}
 	}
-	preserveStickyBinding = preserveStickyBinding ||
-		(platform == PlatformOpenAI && s.shouldPreserveOpenAIStickyBindingDuringOverLimitCooldown(ctx, stickyAccountID, requestedModel))
 	stickyWeighted := s.isOpenAIAdvancedSchedulerStickyWeightedEnabled(ctx)
 	subscriptionPriority := s.isOpenAIAdvancedSchedulerSubscriptionPriorityEnabled(ctx)
 	stickyPreviousAccountID := int64(0)
@@ -2384,7 +2361,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		StickyPreviousAccountID: stickyPreviousAccountID,
 		StickyWeighted:          stickyWeighted,
 		SubscriptionPriority:    subscriptionPriority,
-		PreserveStickyBinding:   preserveStickyBinding || preserveGuardianParentBinding,
+		PreserveStickyBinding:   preserveGuardianParentBinding,
 		RequirePrivacySet:       s.openAIGroupRequiresPrivacySet(ctx, groupID),
 		PreviousResponseID:      previousResponseID,
 		PreviousResponseCanMove: previousResponseCanMove,

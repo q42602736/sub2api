@@ -2552,52 +2552,6 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 	return int64(len(accountIDs)), nil
 }
 
-// RecoverExpiredGrokRateLimits 清理到期的 Grok OAuth 本地限流状态。
-// 上游免费额度按滚动窗口自然恢复；这里不发起模型探测，避免恢复检查消耗 Token。
-// WHERE 条件与更新在同一条语句中执行，新的未来重置时间不会被旧恢复任务覆盖。
-func (r *accountRepository) RecoverExpiredGrokRateLimits(ctx context.Context, now time.Time) (int64, error) {
-	rows, err := r.sql.QueryContext(ctx, `
-		UPDATE accounts
-		SET rate_limited_at = NULL,
-			rate_limit_reset_at = NULL,
-			updated_at = NOW()
-		WHERE deleted_at IS NULL
-			AND platform = $1
-			AND type = $2
-			AND rate_limited_at IS NOT NULL
-			AND rate_limit_reset_at IS NOT NULL
-			AND rate_limit_reset_at <= $3
-		RETURNING id
-	`, service.PlatformGrok, service.AccountTypeOAuth, now)
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	accountIDs := make([]int64, 0)
-	for rows.Next() {
-		var accountID int64
-		if err := rows.Scan(&accountID); err != nil {
-			return 0, err
-		}
-		accountIDs = append(accountIDs, accountID)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-
-	if len(accountIDs) > 0 {
-		payload := map[string]any{"account_ids": accountIDs}
-		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
-			logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue Grok quota recovery changes failed: err=%v", err)
-		}
-		r.syncSchedulerAccountSnapshots(ctx, accountIDs)
-	}
-	return int64(len(accountIDs)), nil
-}
-
 func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	updates = stripCodexFingerprintSeedFromExtraUpdate(updates)
 	if len(updates) == 0 {

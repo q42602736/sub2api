@@ -29,7 +29,7 @@ vi.mock('@/api/admin', () => ({
   }
 }))
 
-import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
+import { getOpenAIAccountLoginHint, useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { adminAPI } from '@/api/admin'
 
 describe('useOpenAIOAuth.buildCredentials', () => {
@@ -72,6 +72,40 @@ describe('useOpenAIOAuth.buildCredentials', () => {
 
     expect(creds.plan_type).toBe('team')
     expect(creds.subscription_expires_at).toBe('2026-07-20T19:22:48+00:00')
+  })
+})
+
+describe('useOpenAIOAuth.generateAuthUrl', () => {
+  it('adds the current OpenAI account email as login_hint to the copied URL', async () => {
+    vi.mocked(adminAPI.accounts.generateAuthUrl).mockResolvedValueOnce({
+      auth_url: 'https://auth.openai.com/oauth/authorize?state=test-state',
+      session_id: 'session-id'
+    })
+
+    const loginHint = getOpenAIAccountLoginHint({
+      platform: 'openai',
+      credentials: { email: '  current@example.com ' },
+      extra: {}
+    })
+    const oauth = useOpenAIOAuth()
+
+    await oauth.generateAuthUrl(null, undefined, loginHint)
+
+    expect(oauth.authUrl.value).toContain('login_hint=current%40example.com')
+    expect(adminAPI.accounts.generateAuthUrl).toHaveBeenCalledWith(
+      '/admin/openai/generate-auth-url',
+      {}
+    )
+  })
+
+  it('prefers the stored extra email when credentials do not contain one', () => {
+    expect(
+      getOpenAIAccountLoginHint({
+        platform: 'openai',
+        credentials: {},
+        extra: { email: 'extra@example.com' }
+      })
+    ).toBe('extra@example.com')
   })
 })
 

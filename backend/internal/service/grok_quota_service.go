@@ -101,6 +101,10 @@ func (s *GrokQuotaService) QueryQuota(ctx context.Context, accountID int64) (*Gr
 
 	probeResult, probeErr := s.ProbeUsage(ctx, accountID)
 	if probeErr != nil {
+		if billingResult != nil && billingResult.Billing != nil {
+			billingResult.ProbeError = probeErr.Error()
+			return billingResult, nil
+		}
 		return nil, probeErr
 	}
 	if probeResult == nil {
@@ -177,19 +181,10 @@ func (s *GrokQuotaService) probeUsage(ctx context.Context, accountID int64) (*Gr
 	defer func() { _ = resp.Body.Close() }()
 
 	snapshot := xai.ObserveQuotaHeaders(resp.Header, resp.StatusCode, "active_probe")
-	if resp.StatusCode == http.StatusTooManyRequests {
-		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
-		applyGrokFreeUsageExhaustion(snapshot, responseBody)
-	}
 	stampGrokQuotaSnapshotForPlan(account, snapshot, probeModel)
-	now := time.Now()
-	resetAt, limited := grokRateLimitResetAtForAccount(account, snapshot, now)
-	if localResetAt, ok := grokFreeRollingQuotaResetAt(ctx, s.usageLogRepo, account, snapshot, now); ok && localResetAt.After(resetAt) {
-		resetAt = localResetAt
-		limited = true
-	}
+	resetAt, limited := grokRateLimitResetAtForAccount(account, snapshot, time.Now())
 	if limited {
-		normalizeGrokExhaustedWindowResets(snapshot, resetAt, now)
+		normalizeGrokExhaustedWindowResets(snapshot, resetAt, time.Now())
 	}
 	// A failed probe must not erase a previously observed snapshot.  401/403 and
 	// transport/server errors commonly carry no quota headers; only successful

@@ -397,9 +397,6 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyFallbackModelOpenAI] = settings.FallbackModelOpenAI
 	updates[SettingKeyFallbackModelGemini] = settings.FallbackModelGemini
 	updates[SettingKeyFallbackModelAntigravity] = settings.FallbackModelAntigravity
-	updates[SettingKeyOpenAIOverLimitModeEnabled] = strconv.FormatBool(settings.OpenAIOverLimitModeEnabled)
-	updates[SettingKeyOpenAIOverLimitCooldownSeconds] = strconv.Itoa(normalizeOpenAIOverLimitCooldownSeconds(settings.OpenAIOverLimitCooldownSeconds))
-	updates[SettingKeyOpenAIOverLimitParallelEnabled] = strconv.FormatBool(settings.OpenAIOverLimitParallelEnabled)
 
 	// Identity patch configuration (Claude -> Gemini)
 	updates[SettingKeyEnableIdentityPatch] = strconv.FormatBool(settings.EnableIdentityPatch)
@@ -753,13 +750,6 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 			SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky:    settings.OpenAIAdvancedSchedulerWeightSessionSticky,
 		}),
 		expiresAt: time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
-	})
-	openAIOverLimitSettingsSF.Forget("openai_over_limit_settings")
-	openAIOverLimitSettingsCache.Store(&cachedOpenAIOverLimitSettings{
-		enabled:         settings.OpenAIOverLimitModeEnabled,
-		cooldownSeconds: normalizeOpenAIOverLimitCooldownSeconds(settings.OpenAIOverLimitCooldownSeconds),
-		parallelEnabled: settings.OpenAIOverLimitParallelEnabled,
-		expiresAt:       time.Now().Add(openAIOverLimitSettingsCacheTTL).UnixNano(),
 	})
 	// Invalidate the quota auto-pause cache and let the next read trigger a fresh load.
 	// We can't know from here whether ops_advanced_settings was also touched, so be

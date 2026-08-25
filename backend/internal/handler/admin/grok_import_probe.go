@@ -13,8 +13,6 @@ import (
 const (
 	grokImportProbeConcurrency = 3
 	grokImportProbeTimeout     = 25 * time.Second
-	grokImportProbeMaxAttempts = 2
-	grokImportProbeRetryDelay  = 8 * time.Second
 	grokImportProbeQueueLimit  = 64
 )
 
@@ -25,7 +23,6 @@ type grokImportProber interface {
 type grokImportProbeTask struct {
 	prober    grokImportProber
 	accountID int64
-	attempt   int
 }
 
 type grokImportProbeScheduler struct {
@@ -67,30 +64,22 @@ func (s *grokImportProbeScheduler) schedule(prober grokImportProber, account *se
 		return
 	}
 
-	s.enqueue(grokImportProbeTask{prober: prober, accountID: account.ID, attempt: 1})
-}
-
-func (s *grokImportProbeScheduler) enqueue(task grokImportProbeTask) {
-	if s == nil || task.prober == nil || task.accountID <= 0 {
-		return
-	}
-
 	s.mu.Lock()
-	if _, exists := s.pending[task.accountID]; exists {
+	if _, exists := s.pending[account.ID]; exists {
 		s.mu.Unlock()
 		return
 	}
-	if _, exists := s.inFlight[task.accountID]; exists {
+	if _, exists := s.inFlight[account.ID]; exists {
 		s.mu.Unlock()
 		return
 	}
 	if len(s.queue) >= grokImportProbeQueueLimit {
 		s.mu.Unlock()
-		slog.Debug("grok_import_active_probe_dropped", "account_id", task.accountID, "reason", "queue_full")
+		slog.Debug("grok_import_active_probe_dropped", "account_id", account.ID, "reason", "queue_full")
 		return
 	}
-	s.queue = append(s.queue, task)
-	s.pending[task.accountID] = struct{}{}
+	s.queue = append(s.queue, grokImportProbeTask{prober: prober, accountID: account.ID})
+	s.pending[account.ID] = struct{}{}
 	if s.workers < s.concurrency {
 		s.workers++
 		if s.workers > s.maxWorkers {
@@ -107,7 +96,7 @@ func (s *grokImportProbeScheduler) worker() {
 		if !ok {
 			return
 		}
-		s.run(task)
+		s.run(task.prober, task.accountID)
 		s.finish(task.accountID)
 	}
 }
@@ -136,13 +125,12 @@ func (s *grokImportProbeScheduler) finish(accountID int64) {
 	s.mu.Unlock()
 }
 
-func (s *grokImportProbeScheduler) run(task grokImportProbeTask) {
+func (s *grokImportProbeScheduler) run(prober grokImportProber, accountID int64) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			slog.Error(
 				"grok_import_active_probe_panic",
-				"account_id", task.accountID,
-				"attempt", task.attempt,
+				"account_id", accountID,
 				"recovery_type", panicType(recovered),
 			)
 		}
@@ -150,23 +138,20 @@ func (s *grokImportProbeScheduler) run(task grokImportProbeTask) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 	defer cancel()
-	result, err := task.prober.QueryQuota(ctx, task.accountID)
+	result, err := prober.QueryQuota(ctx, accountID)
 	if err != nil {
 		slog.Warn(
 			"grok_import_active_probe_failed",
-			"account_id", task.accountID,
-			"attempt", task.attempt,
+			"account_id", accountID,
 			"status", infraerrors.Code(err),
 			"reason", infraerrors.Reason(err),
 		)
-		s.retry(task, err)
 		return
 	}
 	if result == nil {
 		slog.Warn(
 			"grok_import_active_probe_failed",
-			"account_id", task.accountID,
-			"attempt", task.attempt,
+			"account_id", accountID,
 			"reason", "empty_result",
 		)
 		return
@@ -174,38 +159,11 @@ func (s *grokImportProbeScheduler) run(task grokImportProbeTask) {
 
 	slog.Info(
 		"grok_import_active_probe_completed",
-		"account_id", task.accountID,
-		"attempt", task.attempt,
+		"account_id", accountID,
 		"model", result.Model,
 		"status", result.StatusCode,
 		"headers_observed", result.HeadersObserved,
 	)
-}
-
-func (s *grokImportProbeScheduler) retry(task grokImportProbeTask, err error) {
-	if task.attempt >= grokImportProbeMaxAttempts || !isRetryableGrokImportProbeError(err) {
-		return
-	}
-	nextTask := task
-	nextTask.attempt++
-	slog.Info(
-		"grok_import_active_probe_retry_scheduled",
-		"account_id", task.accountID,
-		"next_attempt", nextTask.attempt,
-		"delay", grokImportProbeRetryDelay.String(),
-	)
-	time.AfterFunc(grokImportProbeRetryDelay, func() {
-		s.enqueue(nextTask)
-	})
-}
-
-func isRetryableGrokImportProbeError(err error) bool {
-	switch infraerrors.Code(err) {
-	case 403, 408, 425, 500, 502, 503, 504:
-		return true
-	default:
-		return false
-	}
 }
 
 func panicType(value any) string {

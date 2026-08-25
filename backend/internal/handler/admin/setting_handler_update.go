@@ -223,10 +223,6 @@ type UpdateSettingsRequest struct {
 	FallbackModelGemini      string `json:"fallback_model_gemini"`
 	FallbackModelAntigravity string `json:"fallback_model_antigravity"`
 
-	OpenAIOverLimitModeEnabled     *bool `json:"openai_over_limit_mode_enabled"`
-	OpenAIOverLimitCooldownSeconds *int  `json:"openai_over_limit_cooldown_seconds"`
-	OpenAIOverLimitParallelEnabled *bool `json:"openai_over_limit_parallel_enabled"`
-
 	// Identity patch configuration (Claude -> Gemini)
 	EnableIdentityPatch bool   `json:"enable_identity_patch"`
 	IdentityPatchPrompt string `json:"identity_patch_prompt"`
@@ -1645,9 +1641,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FallbackModelOpenAI:                    req.FallbackModelOpenAI,
 		FallbackModelGemini:                    req.FallbackModelGemini,
 		FallbackModelAntigravity:               req.FallbackModelAntigravity,
-		OpenAIOverLimitModeEnabled:             boolValueOrDefault(req.OpenAIOverLimitModeEnabled, previousSettings.OpenAIOverLimitModeEnabled),
-		OpenAIOverLimitCooldownSeconds:         intValueOrDefault(req.OpenAIOverLimitCooldownSeconds, previousSettings.OpenAIOverLimitCooldownSeconds),
-		OpenAIOverLimitParallelEnabled:         boolValueOrDefault(req.OpenAIOverLimitParallelEnabled, previousSettings.OpenAIOverLimitParallelEnabled),
 		EnableIdentityPatch:                    req.EnableIdentityPatch,
 		IdentityPatchPrompt:                    req.IdentityPatchPrompt,
 		MinClaudeCodeVersion:                   req.MinClaudeCodeVersion,
@@ -2270,9 +2263,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FallbackModelOpenAI:                                    updatedSettings.FallbackModelOpenAI,
 		FallbackModelGemini:                                    updatedSettings.FallbackModelGemini,
 		FallbackModelAntigravity:                               updatedSettings.FallbackModelAntigravity,
-		OpenAIOverLimitModeEnabled:                             updatedSettings.OpenAIOverLimitModeEnabled,
-		OpenAIOverLimitCooldownSeconds:                         updatedSettings.OpenAIOverLimitCooldownSeconds,
-		OpenAIOverLimitParallelEnabled:                         updatedSettings.OpenAIOverLimitParallelEnabled,
 		EnableIdentityPatch:                                    updatedSettings.EnableIdentityPatch,
 		IdentityPatchPrompt:                                    updatedSettings.IdentityPatchPrompt,
 		OpsMonitoringEnabled:                                   updatedSettings.OpsMonitoringEnabled,

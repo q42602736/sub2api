@@ -29,42 +29,27 @@
         <template #cell-user="{ row }">
           <div class="text-sm">
             <button
-              v-if="displayUserEmail(row)"
+              v-if="row.user?.email"
               class="font-medium text-primary-600 underline decoration-dashed underline-offset-2 transition-colors hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-              @click="$emit('userClick', row.user_id, displayUserEmail(row))"
+              @click="$emit('userClick', row.user_id, row.user?.email)"
               :title="t('admin.usage.clickToViewBalance')"
             >
-              {{ displayUserEmail(row) }}
+              {{ row.user.email }}
             </button>
             <span v-else class="font-medium text-gray-900 dark:text-white">-</span>
             <span v-if="row.user?.deleted_at" class="ml-1 inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/20 dark:text-rose-400 dark:ring-rose-500/30">
               {{ t('admin.usage.userDeletedBadge') }}
             </span>
-            <span v-if="row.user_id != null" class="ml-1 text-gray-500 dark:text-gray-400">#{{ row.user_id }}</span>
+            <span class="ml-1 text-gray-500 dark:text-gray-400">#{{ row.user_id }}</span>
           </div>
         </template>
 
         <template #cell-api_key="{ row }">
-          <span class="text-sm text-gray-900 dark:text-white">{{ displayApiKeyName(row) || '-' }}</span>
+          <span class="text-sm text-gray-900 dark:text-white">{{ row.api_key?.name || '-' }}</span>
         </template>
 
         <template #cell-account="{ row }">
-          <span class="text-sm text-gray-900 dark:text-white">{{ displayAccountName(row) || '-' }}</span>
-        </template>
-
-        <template #cell-result="{ row }">
-          <span
-            class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium"
-            :class="row.kind === 'error'
-              ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300'
-              : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'"
-          >
-            {{ row.kind === 'error' ? t('admin.ops.requestDetails.kind.error') : t('admin.ops.requestDetails.kind.success') }}
-          </span>
-        </template>
-
-        <template #cell-status="{ row }">
-          <span class="text-sm text-gray-900 dark:text-white">{{ displayStatusCode(row) }}</span>
+          <span class="text-sm text-gray-900 dark:text-white">{{ row.account?.name || '-' }}</span>
         </template>
 
         <template #cell-model="{ row }">
@@ -127,9 +112,6 @@
         <template #cell-group="{ row }">
           <span v-if="row.group" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
             {{ row.group.name }}
-          </span>
-          <span v-else-if="displayGroupName(row)" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
-            {{ displayGroupName(row) }}
           </span>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
@@ -569,17 +551,8 @@ import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
 import type { AdminUsageLog } from '@/types'
 import type { Column } from '@/components/common/types'
 
-type UsageTableRow = AdminUsageLog & {
-  kind?: 'success' | 'error'
-  status_code?: number | null
-  user_email?: string | null
-  api_key_name?: string | null
-  account_name?: string | null
-  group_name?: string | null
-}
-
 interface Props {
-  data: UsageTableRow[]
+  data: AdminUsageLog[]
   loading?: boolean
   columns: Column[]
   serverSideSort?: boolean
@@ -611,17 +584,6 @@ const copiedRequestId = ref<string | null>(null)
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
 const ipGeoBatchLoading = ref(false)
-
-const trimmed = (value: string | null | undefined): string => value?.trim() ?? ''
-const displayUserEmail = (row: UsageTableRow): string => trimmed(row.user?.email) || trimmed(row.user_email)
-const displayApiKeyName = (row: UsageTableRow): string => trimmed(row.api_key?.name) || trimmed(row.api_key_name)
-const displayAccountName = (row: UsageTableRow): string => trimmed(row.account?.name) || trimmed(row.account_name)
-const displayGroupName = (row: UsageTableRow): string => trimmed(row.group?.name) || trimmed(row.group_name)
-const displayStatusCode = (row: UsageTableRow): string => {
-  if (row.status_code != null) return String(row.status_code)
-  if (row.kind === 'success') return '200'
-  return '-'
-}
 
 const showIpGeoToolbar = computed(() => props.columns.some((col) => col.key === 'ip_address'))
 
@@ -684,14 +646,14 @@ const copyRequestId = async (requestId: string) => {
 // Tooltip state - cost
 const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
-const tooltipData = ref<UsageTableRow | null>(null)
+const tooltipData = ref<AdminUsageLog | null>(null)
 
 // Tooltip state - token
 const tokenTooltipVisible = ref(false)
 const tokenTooltipPosition = ref({ x: 0, y: 0 })
-const tokenTooltipData = ref<UsageTableRow | null>(null)
+const tokenTooltipData = ref<AdminUsageLog | null>(null)
 
-const getRequestTypeLabel = (row: UsageTableRow): string => {
+const getRequestTypeLabel = (row: AdminUsageLog): string => {
   const requestType = resolveUsageRequestType(row)
   if (requestType === 'cyber') return t('usage.cyber')
   if (requestType === 'live') return t('usage.live')
@@ -701,7 +663,7 @@ const getRequestTypeLabel = (row: UsageTableRow): string => {
   return t('usage.unknown')
 }
 
-const getRequestTypeBadgeClass = (row: UsageTableRow): string => {
+const getRequestTypeBadgeClass = (row: AdminUsageLog): string => {
   const requestType = resolveUsageRequestType(row)
   if (requestType === 'cyber') return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
   if (requestType === 'live') return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200'
@@ -728,7 +690,7 @@ const formatDuration = (ms: number | null | undefined): string => {
 }
 
 // Cost tooltip functions
-const showTooltip = (event: MouseEvent, row: UsageTableRow) => {
+const showTooltip = (event: MouseEvent, row: AdminUsageLog) => {
   const target = event.currentTarget as HTMLElement
   const rect = target.getBoundingClientRect()
   tooltipData.value = row
@@ -743,7 +705,7 @@ const hideTooltip = () => {
 }
 
 // Token tooltip functions
-const showTokenTooltip = (event: MouseEvent, row: UsageTableRow) => {
+const showTokenTooltip = (event: MouseEvent, row: AdminUsageLog) => {
   const target = event.currentTarget as HTMLElement
   const rect = target.getBoundingClientRect()
   tokenTooltipData.value = row

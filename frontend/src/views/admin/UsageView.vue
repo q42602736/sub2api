@@ -186,7 +186,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import { useRoute } from 'vue-router'
-import { useAppStore } from '@/stores/app'; import { adminAPI } from '@/api/admin'
+import { useAppStore } from '@/stores/app'; import { adminAPI } from '@/api/admin'; import { adminUsageAPI } from '@/api/admin/usage'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
@@ -203,8 +203,7 @@ import type { OpsErrorLog } from '@/api/admin/ops'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'; import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'; import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
-import type { OpsRequestDetail, OpsRequestDetailsParams } from '@/api/admin/ops'
+import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -212,7 +211,7 @@ type DistributionMetric = 'tokens' | 'actual_cost'
 type EndpointSource = 'inbound' | 'upstream' | 'path'
 type ModelDistributionSource = 'requested' | 'upstream' | 'mapping'
 const route = useRoute()
-const usageStats = ref<AdminUsageStatsResponse | null>(null); const usageLogs = ref<OpsRequestDetail[]>([]); const loading = ref(false); const exporting = ref(false)
+const usageStats = ref<AdminUsageStatsResponse | null>(null); const usageLogs = ref<AdminUsageLog[]>([]); const loading = ref(false); const exporting = ref(false)
 const trendData = ref<TrendDataPoint[]>([]); const requestedModelStats = ref<ModelStat[]>([]); const upstreamModelStats = ref<ModelStat[]>([]); const mappingModelStats = ref<ModelStat[]>([]); const groupStats = ref<GroupStat[]>([]); const chartsLoading = ref(false); const modelStatsLoading = ref(false); const granularity = ref<'day' | 'hour'>('hour')
 const modelDistributionMetric = ref<DistributionMetric>('tokens')
 const modelDistributionSource = ref<ModelDistributionSource>('requested')
@@ -368,44 +367,31 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
   applyFilters()
 }
 
-const buildOpsTimeRange = (): Pick<OpsRequestDetailsParams, 'start_time' | 'end_time'> => {
-  const start = filters.value.start_date || startDate.value
-  const end = filters.value.end_date || endDate.value
-  const startTime = new Date(`${start}T00:00:00`)
-  const endTime = new Date(`${end}T00:00:00`)
-  endTime.setDate(endTime.getDate() + 1)
-  return {
-    start_time: startTime.toISOString(),
-    end_time: endTime.toISOString()
-  }
-}
-
-const buildRequestListParams = (
+const buildUsageListParams = (
   page: number,
-  pageSize: number
-): OpsRequestDetailsParams => {
-  const params: OpsRequestDetailsParams = {
+  pageSize: number,
+  exactTotal: boolean
+): AdminUsageQueryParams => {
+  const requestType = filters.value.request_type
+  const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
+  return {
     page,
     page_size: pageSize,
-    kind: 'all',
-    sort: sortState.sort_by === 'duration' ? 'duration_desc' : 'created_at_desc',
-    ...buildOpsTimeRange()
+    exact_total: exactTotal,
+    ...filters.value,
+    stream: legacyStream === null ? undefined : legacyStream,
+    sort_by: sortState.sort_by,
+    sort_order: sortState.sort_order
   }
-
-  if (filters.value.user_id) params.user_id = filters.value.user_id
-  if (filters.value.api_key_id) params.api_key_id = filters.value.api_key_id
-  if (filters.value.account_id) params.account_id = filters.value.account_id
-  if (filters.value.group_id) params.group_id = filters.value.group_id
-  if (filters.value.request_type) params.request_type = filters.value.request_type
-  if (filters.value.model) params.model = filters.value.model
-
-  return params
 }
 
 const loadLogs = async () => {
   abortController?.abort(); const c = new AbortController(); abortController = c; loading.value = true
   try {
-    const res = await adminAPI.ops.listRequestDetails(buildRequestListParams(pagination.page, pagination.page_size), { signal: c.signal })
+    const res = await adminAPI.usage.list(
+      buildUsageListParams(pagination.page, pagination.page_size, false),
+      { signal: c.signal }
+    )
     if(!c.signal.aborted) { usageLogs.value = res.items; pagination.total = res.total }
   } catch (error: any) { if(error?.name !== 'AbortError') console.error('Failed to load usage logs:', error) } finally { if(abortController === c) loading.value = false }
 }
@@ -571,7 +557,7 @@ const handleIpGeoBatchFailed = () => {
 }
 const cancelExport = () => exportAbortController?.abort()
 const openCleanupDialog = () => { cleanupDialogVisible.value = true }
-const getRequestTypeLabel = (log: OpsRequestDetail): string => {
+const getRequestTypeLabel = (log: AdminUsageLog): string => {
   const requestType = resolveUsageRequestType(log)
   if (requestType === 'cyber') return t('usage.cyber')
   if (requestType === 'live') return t('usage.live')
@@ -589,9 +575,7 @@ const exportToExcel = async () => {
     const XLSX = await import('xlsx')
     const headers = [
       t('usage.time'), t('admin.usage.user'), t('usage.apiKeyFilter'),
-      t('admin.usage.account'), t('usage.requestedModel'), t('usage.sentUpstreamModel'), t('usage.upstreamResponseModel'), t('usage.upstreamModelMismatch'),
-      t('admin.ops.requestDetails.table.kind'), t('admin.ops.requestDetails.table.status'),
-      t('usage.reasoningEffort'), t('admin.usage.group'),
+      t('admin.usage.account'), t('usage.requestedModel'), t('usage.sentUpstreamModel'), t('usage.upstreamResponseModel'), t('usage.upstreamModelMismatch'), t('usage.reasoningEffort'), t('admin.usage.group'),
       t('usage.inboundEndpoint'), t('usage.upstreamEndpoint'),
       t('usage.type'),
       t('admin.usage.inputTokens'), t('admin.usage.outputTokens'),
@@ -604,28 +588,23 @@ const exportToExcel = async () => {
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers])
     while (true) {
-      const res = await adminAPI.ops.listRequestDetails(buildRequestListParams(p, 100), { signal: c.signal })
+      const res = await adminUsageAPI.list(
+        buildUsageListParams(p, 100, true),
+        { signal: c.signal }
+      )
       if (c.signal.aborted) break; if (p === 1) { total = res.total; exportProgress.total = total }
-      const rows = (res.items || []).map((log: OpsRequestDetail) => {
-        const accountBaseCost = log.account_stats_cost ?? log.total_cost
-        return [
-          log.created_at, log.user_email || '', log.api_key_name || '', log.account_name || '',
-          log.model, log.upstream_model || log.model, log.upstream_response_model || '',
-          log.upstream_model_mismatch == null ? '' : t(log.upstream_model_mismatch ? 'common.yes' : 'common.no'),
-          log.kind === 'error' ? t('admin.ops.requestDetails.kind.error') : t('admin.ops.requestDetails.kind.success'),
-          log.status_code ?? 200,
-          formatReasoningEffort(log.reasoning_effort), log.group_name || '',
-          log.inbound_endpoint || '', log.upstream_endpoint || '', getRequestTypeLabel(log),
-          log.input_tokens ?? '', log.output_tokens ?? '', log.cache_read_tokens ?? '', log.cache_creation_tokens ?? '',
-          log.input_cost?.toFixed(6) || '', log.output_cost?.toFixed(6) || '',
-          log.cache_read_cost?.toFixed(6) || '', log.cache_creation_cost?.toFixed(6) || '',
-          log.rate_multiplier?.toPrecision(4) || '', log.account_rate_multiplier?.toPrecision(4) || '',
-          log.total_cost?.toFixed(6) || '', log.actual_cost?.toFixed(6) || '',
-          accountBaseCost != null && log.account_rate_multiplier != null ? (accountBaseCost * log.account_rate_multiplier).toFixed(6) : '',
-          log.first_token_ms ?? '', log.duration_ms,
-          log.request_id || '', log.user_agent || '', log.ip_address || ''
-        ]
-      })
+      const rows = (res.items || []).map((log: AdminUsageLog) => [
+        log.created_at, log.user?.email || '', log.api_key?.name || '', log.account?.name || '', log.model,
+        log.upstream_model || log.model, log.upstream_response_model || '', log.upstream_model_mismatch == null ? '' : t(log.upstream_model_mismatch ? 'common.yes' : 'common.no'), formatReasoningEffort(log.reasoning_effort), log.group?.name || '',
+        log.inbound_endpoint || '', log.upstream_endpoint || '', getRequestTypeLabel(log),
+        log.input_tokens, log.output_tokens, log.cache_read_tokens, log.cache_creation_tokens,
+        log.input_cost?.toFixed(6) || '0.000000', log.output_cost?.toFixed(6) || '0.000000',
+        log.cache_read_cost?.toFixed(6) || '0.000000', log.cache_creation_cost?.toFixed(6) || '0.000000',
+        log.rate_multiplier?.toPrecision(4) || '1.00', (log.account_rate_multiplier ?? 1).toPrecision(4),
+        log.total_cost?.toFixed(6) || '0.000000', log.actual_cost?.toFixed(6) || '0.000000',
+        ((log.account_stats_cost ?? log.total_cost) * (log.account_rate_multiplier ?? 1)).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
+        log.request_id || '', log.user_agent || '', log.ip_address || ''
+      ])
       if (rows.length) {
         XLSX.utils.sheet_add_aoa(ws, rows, { origin: -1 })
       }
@@ -655,9 +634,7 @@ const allColumns = computed(() => [
   { key: 'user', label: t('admin.usage.user'), sortable: false },
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
   { key: 'account', label: t('admin.usage.account'), sortable: false },
-  { key: 'result', label: t('admin.ops.requestDetails.table.kind'), sortable: false },
-  { key: 'status', label: t('admin.ops.requestDetails.table.status'), sortable: false },
-  { key: 'model', label: t('usage.model'), sortable: false },
+  { key: 'model', label: t('usage.model'), sortable: true },
   { key: 'reasoning_effort', label: t('usage.reasoningEffort'), sortable: false },
   { key: 'endpoint', label: t('usage.endpoint'), sortable: false },
   { key: 'group', label: t('admin.usage.group'), sortable: false },
