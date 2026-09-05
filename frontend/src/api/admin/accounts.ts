@@ -296,6 +296,74 @@ export async function refreshCredentials(id: number): Promise<Account> {
   return data
 }
 
+export type AutoReauthorizeJobStatus = 'running' | 'succeeded' | 'failed'
+
+export interface AutoReauthorizeJobLog {
+  at: string
+  message: string
+}
+
+export interface AutoReauthorizeJob {
+  job_id: string
+  account_id: number
+  status: AutoReauthorizeJobStatus
+  logs: AutoReauthorizeJobLog[]
+  error?: string
+  account?: Account
+}
+
+export type AutoReauthorizeBatchJobStatus = AutoReauthorizeJobStatus
+export type AutoReauthorizeBatchAccountStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+
+export interface AutoReauthorizeBatchAccountResult {
+  account_id: number
+  account_name?: string
+  status: AutoReauthorizeBatchAccountStatus
+  logs: AutoReauthorizeJobLog[]
+  error?: string
+}
+
+export interface AutoReauthorizeBatchJob {
+  job_id: string
+  status: AutoReauthorizeBatchJobStatus
+  total: number
+  completed: number
+  succeeded_count: number
+  failed_count: number
+  current_account_id?: number
+  results: AutoReauthorizeBatchAccountResult[]
+}
+
+/** 在容器内启动 OpenAI 邮箱验证码自动重新授权任务。 */
+export async function autoReauthorize(id: number): Promise<AutoReauthorizeJob> {
+  const { data } = await apiClient.post<AutoReauthorizeJob>(`/admin/accounts/${id}/auto-reauthorize`)
+  return data
+}
+
+/** 查询 OpenAI 自动重新授权任务状态和流程日志。 */
+export async function getAutoReauthorizeJob(id: number, jobId: string): Promise<AutoReauthorizeJob> {
+  const { data } = await apiClient.get<AutoReauthorizeJob>(
+    `/admin/accounts/${id}/auto-reauthorize/${encodeURIComponent(jobId)}`
+  )
+  return data
+}
+
+/** 按账号顺序启动 OpenAI 邮箱验证码批量自动重新授权任务。 */
+export async function autoReauthorizeBatch(accountIds: number[]): Promise<AutoReauthorizeBatchJob> {
+  const { data } = await apiClient.post<AutoReauthorizeBatchJob>('/admin/accounts/auto-reauthorize/batch', {
+    account_ids: accountIds
+  })
+  return data
+}
+
+/** 查询批量自动重新授权任务状态和逐账号流程日志。 */
+export async function getAutoReauthorizeBatchJob(jobId: string): Promise<AutoReauthorizeBatchJob> {
+  const { data } = await apiClient.get<AutoReauthorizeBatchJob>(
+    `/admin/accounts/auto-reauthorize/batch/${encodeURIComponent(jobId)}`
+  )
+  return data
+}
+
 /**
  * Apply OAuth credentials after re-authorization.
  *
@@ -1059,6 +1127,10 @@ export const accountsAPI = {
   toggleStatus,
   testAccount,
   refreshCredentials,
+  autoReauthorize,
+  getAutoReauthorizeJob,
+  autoReauthorizeBatch,
+  getAutoReauthorizeBatchJob,
   applyOAuthCredentials,
   getStats,
   clearError,

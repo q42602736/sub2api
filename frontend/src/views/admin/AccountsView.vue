@@ -182,6 +182,7 @@
           :all-results-selected="allResultsSelected"
           @delete="handleBulkDelete"
           @reset-status="handleBulkResetStatus"
+          @auto-reauthorize="handleBulkAutoReauthorize"
           @refresh-token="handleBulkRefreshToken"
           @probe-upstream-billing="handleBulkProbeUpstreamBilling"
           @edit-selected="openBulkEditSelected"
@@ -453,6 +454,7 @@
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
+    <BulkAutoReauthModal :show="showBulkAutoReauth" :job="bulkAutoReauthJob" @close="closeBulkAutoReauthModal" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
@@ -473,6 +475,15 @@
     <TempUnschedStatusModal :show="showTempUnsched" :account="tempUnschedAcc" @close="showTempUnsched = false" @reset="handleTempUnschedReset" />
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.accounts.deleteAccount')" :message="t('admin.accounts.deleteConfirm', { name: deletingAcc?.name })" :confirm-text="t('common.delete')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
     <ConfirmDialog :show="showCreateShadowDialog" :title="t('admin.accounts.createSparkShadow')" :message="t('admin.accounts.createSparkShadowConfirm', { name: creatingShadowAcc?.name })" @confirm="confirmCreateSparkShadow" @cancel="showCreateShadowDialog = false" />
+    <ConfirmDialog
+      :show="showBulkAutoReauthConfirm"
+      :title="t('admin.accounts.bulkActions.autoReauthorize')"
+      :message="t('admin.accounts.bulkActions.confirmAutoReauthorize', { count: bulkAutoReauthConfirmIds.length })"
+      :confirm-text="t('common.confirm')"
+      :cancel-text="t('common.cancel')"
+      @confirm="confirmBulkAutoReauthorize"
+      @cancel="cancelBulkAutoReauthorize"
+    />
     <ConfirmDialog :show="showExportDataDialog" :title="t('admin.accounts.dataExport')" :message="t('admin.accounts.dataExportConfirmMessage')" :confirm-text="t('admin.accounts.dataExportConfirm')" :cancel-text="t('common.cancel')" @confirm="handleExportData" @cancel="showExportDataDialog = false">
       <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
         <input type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" v-model="includeProxyOnExport" />
@@ -510,6 +521,7 @@ import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActions
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
+import BulkAutoReauthModal from '@/components/admin/account/BulkAutoReauthModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
@@ -533,6 +545,7 @@ import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountListItem, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
+import type { AutoReauthorizeBatchJob } from '@/api/admin/accounts'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -599,6 +612,8 @@ const showTempUnsched = ref(false)
 const showDeleteDialog = ref(false)
 const showCreateShadowDialog = ref(false)
 const showReAuth = ref(false)
+const showBulkAutoReauthConfirm = ref(false)
+const showBulkAutoReauth = ref(false)
 const showTest = ref(false)
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
@@ -608,6 +623,10 @@ const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
 const creatingShadowAcc = ref<Account | null>(null)
 const reAuthAcc = ref<Account | null>(null)
+const bulkAutoReauthConfirmIds = ref<number[]>([])
+const bulkAutoReauthJob = ref<AutoReauthorizeBatchJob | null>(null)
+const bulkAutoReauthLoading = ref(false)
+let bulkAutoReauthPollTimer: number | null = null
 const testingAcc = ref<Account | null>(null)
 const statsAcc = ref<Account | null>(null)
 const showSchedulePanel = ref(false)
@@ -1934,6 +1953,83 @@ const handleBulkResetStatus = async () => {
     appStore.showError(String(error))
   }
 }
+const stopBulkAutoReauthPolling = () => {
+  if (bulkAutoReauthPollTimer !== null) {
+    window.clearTimeout(bulkAutoReauthPollTimer)
+    bulkAutoReauthPollTimer = null
+  }
+}
+const closeBulkAutoReauthModal = () => {
+  showBulkAutoReauth.value = false
+}
+const pollBulkAutoReauthorizeJob = async () => {
+  const job = bulkAutoReauthJob.value
+  if (!job) return
+
+  try {
+    const latest = await adminAPI.accounts.getAutoReauthorizeBatchJob(job.job_id)
+    bulkAutoReauthJob.value = latest
+    if (latest.status === 'succeeded' || latest.status === 'failed') {
+      bulkAutoReauthLoading.value = false
+      const failedIds = latest.results.filter(result => result.status === 'failed').map(result => result.account_id)
+      if (failedIds.length > 0) {
+        selectedAllResultIDs.value = null
+        setSelectedIds(failedIds)
+        appStore.showError(t('admin.accounts.bulkActions.autoReauthorizePartial', {
+          success: latest.succeeded_count,
+          failed: latest.failed_count
+        }))
+      } else {
+        clearSelection()
+        appStore.showSuccess(t('admin.accounts.bulkActions.autoReauthorizeSuccess', { count: latest.succeeded_count }))
+      }
+      try {
+        await reload()
+      } catch (reloadError) {
+        console.error('Failed to reload accounts after bulk automatic re-authorization:', reloadError)
+      }
+      return
+    }
+
+    bulkAutoReauthPollTimer = window.setTimeout(() => {
+      void pollBulkAutoReauthorizeJob()
+    }, 1000)
+  } catch (error: any) {
+    bulkAutoReauthLoading.value = false
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.oauth.openai.autoReauthFailed')))
+  }
+}
+const cancelBulkAutoReauthorize = () => {
+  showBulkAutoReauthConfirm.value = false
+  bulkAutoReauthConfirmIds.value = []
+}
+
+const handleBulkAutoReauthorize = () => {
+  const accountIds = [...selIds.value]
+  if (accountIds.length === 0 || bulkAutoReauthLoading.value) return
+
+  bulkAutoReauthConfirmIds.value = accountIds
+  showBulkAutoReauthConfirm.value = true
+}
+
+const confirmBulkAutoReauthorize = async () => {
+  const accountIds = [...bulkAutoReauthConfirmIds.value]
+  cancelBulkAutoReauthorize()
+  if (accountIds.length === 0 || bulkAutoReauthLoading.value) return
+
+  stopBulkAutoReauthPolling()
+  bulkAutoReauthLoading.value = true
+  bulkAutoReauthJob.value = null
+  showBulkAutoReauth.value = true
+  try {
+    bulkAutoReauthJob.value = await adminAPI.accounts.autoReauthorizeBatch(accountIds)
+    await pollBulkAutoReauthorizeJob()
+  } catch (error: any) {
+    bulkAutoReauthLoading.value = false
+    showBulkAutoReauth.value = false
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.oauth.openai.autoReauthFailed')))
+  }
+}
 const handleBulkRefreshToken = async () => {
   if (!confirm(t('common.confirm'))) return
   try {
@@ -2602,6 +2698,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   upstreamBillingRateAbortController?.abort()
+  stopBulkAutoReauthPolling()
   if (usageBatchFlushTimer !== null) {
     clearTimeout(usageBatchFlushTimer)
     usageBatchFlushTimer = null

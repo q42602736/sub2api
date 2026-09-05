@@ -106,6 +106,18 @@ services:
       - ANTIGRAVITY_USER_AGENT_VERSION=${ANTIGRAVITY_USER_AGENT_VERSION:-}
 
       # =======================================================================
+      # OpenAI 容器自动重新授权（默认关闭）
+      # =======================================================================
+      - OPENAI_AUTO_REAUTH_ENABLED=${OPENAI_AUTO_REAUTH_ENABLED:-false}
+      - OPENAI_AUTO_REAUTH_MAILTM_API_BASE=${OPENAI_AUTO_REAUTH_MAILTM_API_BASE:-https://api.mail.tm}
+      - OPENAI_AUTO_REAUTH_MAILTM_EMAIL=${OPENAI_AUTO_REAUTH_MAILTM_EMAIL:-}
+      - OPENAI_AUTO_REAUTH_MAILTM_PASSWORD=${OPENAI_AUTO_REAUTH_MAILTM_PASSWORD:-}
+      - OPENAI_AUTO_REAUTH_MAILTM_TOKEN=${OPENAI_AUTO_REAUTH_MAILTM_TOKEN:-}
+      - OPENAI_AUTO_REAUTH_REQUEST_TIMEOUT_SECONDS=${OPENAI_AUTO_REAUTH_REQUEST_TIMEOUT_SECONDS:-15}
+      - OPENAI_AUTO_REAUTH_CODE_TIMEOUT_SECONDS=${OPENAI_AUTO_REAUTH_CODE_TIMEOUT_SECONDS:-120}
+      - OPENAI_AUTO_REAUTH_MAILTM_POLL_INTERVAL_SECONDS=${OPENAI_AUTO_REAUTH_MAILTM_POLL_INTERVAL_SECONDS:-3}
+
+      # =======================================================================
       # Gateway Upstream, Scheduling & Image Configuration
       # =======================================================================
       # Gateway values come from Compose .env or the shell.

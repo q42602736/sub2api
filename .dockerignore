@@ -25,6 +25,11 @@ docs/
 
 # OS files
 .DS_Store
+._*
+**/._*
+.AppleDouble
+.LSOverride
+__MACOSX/
 Thumbs.db
 
 # Build artifacts
@@ -55,6 +60,13 @@ coverage/
 # Local config
 config.yaml
 config.local.yaml
+
+# Local agent/tool state
+.ace-tool/
+.omo/
+findings.md
+progress.md
+task_plan.md
 
 # Logs
 *.log

@@ -48,6 +48,62 @@
         </div>
       </div>
 
+      <div
+        v-if="isOpenAI"
+        class="rounded-lg border border-green-200 bg-green-50 p-4 dark:border-green-800 dark:bg-green-950/30"
+      >
+        <div class="flex items-start gap-3">
+          <Icon name="sparkles" size="sm" class="mt-0.5 text-green-600 dark:text-green-400" />
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-medium text-green-900 dark:text-green-200">
+              {{ t('admin.accounts.oauth.openai.autoReauthTitle') }}
+            </p>
+            <p class="mt-1 text-xs text-green-700 dark:text-green-300">
+              {{ t('admin.accounts.oauth.openai.autoReauthDesc') }}
+            </p>
+            <p
+              v-if="autoReauthError"
+              class="mt-2 whitespace-pre-line text-sm text-red-600 dark:text-red-400"
+            >
+              {{ autoReauthError }}
+            </p>
+            <button
+              type="button"
+              class="btn btn-primary mt-3"
+              :disabled="autoReauthLoading || currentLoading"
+              @click="handleAutoReauthorize"
+            >
+              <svg
+                v-if="autoReauthLoading"
+                class="-ml-1 mr-2 h-4 w-4 animate-spin"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  class="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                ></circle>
+                <path
+                  class="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
+              </svg>
+              <Icon v-else name="sparkles" size="sm" class="mr-2" />
+              {{
+                autoReauthLoading
+                  ? t('admin.accounts.oauth.openai.autoReauthing')
+                  : t('admin.accounts.oauth.openai.startAutoReauth')
+              }}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Add Method Selection (Claude only) -->
       <fieldset v-if="isAnthropic" class="border-0 p-0">
         <legend class="input-label">{{ t('admin.accounts.oauth.authMethod') }}</legend>
@@ -187,10 +243,68 @@
       </div>
     </template>
   </BaseDialog>
+
+  <BaseDialog
+    :show="autoReauthLogVisible"
+    :title="t('admin.accounts.oauth.openai.autoReauthLogTitle')"
+    width="wide"
+    :z-index="60"
+    @close="autoReauthLogVisible = false"
+  >
+    <div v-if="autoReauthJob" class="space-y-4">
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-sm text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.oauth.openai.autoReauthJobId') }}: {{ autoReauthJob.job_id }}
+        </span>
+        <span
+          :class="[
+            'rounded-full px-2.5 py-1 text-xs font-medium',
+            autoReauthJob.status === 'succeeded'
+              ? 'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-300'
+              : autoReauthJob.status === 'failed'
+                ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+          ]"
+        >
+          {{ autoReauthStatusLabel }}
+        </span>
+      </div>
+
+      <div class="max-h-96 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-800">
+        <div v-if="autoReauthJob.logs.length === 0" class="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.oauth.openai.autoReauthNoLogs') }}
+        </div>
+        <ol v-else class="space-y-2">
+          <li
+            v-for="(log, index) in autoReauthJob.logs"
+            :key="`${log.at}-${index}`"
+            class="flex items-start gap-3 text-sm"
+          >
+            <span class="shrink-0 font-mono text-xs text-gray-400 dark:text-gray-500">
+              {{ formatAutoReauthLogTime(log.at) }}
+            </span>
+            <span class="text-gray-700 dark:text-gray-200">{{ log.message }}</span>
+          </li>
+        </ol>
+      </div>
+
+      <p v-if="autoReauthJob.error" class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
+        {{ autoReauthJob.error }}
+      </p>
+    </div>
+
+    <template #footer>
+      <div class="flex justify-end">
+        <button type="button" class="btn btn-secondary" @click="autoReauthLogVisible = false">
+          {{ t('common.close') }}
+        </button>
+      </div>
+    </template>
+  </BaseDialog>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -204,6 +318,8 @@ import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
 import { useGrokOAuth } from '@/composables/useGrokOAuth'
 import type { Account } from '@/types'
+import { extractApiErrorMessage } from '@/utils/apiError'
+import type { AutoReauthorizeJob } from '@/api/admin/accounts'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OAuthAuthorizationFlow from '@/components/account/OAuthAuthorizationFlow.vue'
@@ -246,6 +362,11 @@ const oauthFlowRef = ref<OAuthFlowExposed | null>(null)
 // State
 const addMethod = ref<AddMethod>('oauth')
 const geminiOAuthType = ref<'code_assist' | 'google_one' | 'ai_studio'>('code_assist')
+const autoReauthLoading = ref(false)
+const autoReauthError = ref('')
+const autoReauthJob = ref<AutoReauthorizeJob | null>(null)
+const autoReauthLogVisible = ref(false)
+let autoReauthPollTimer: number | null = null
 
 // Computed - check platform
 const isOpenAI = computed(() => props.account?.platform === 'openai')
@@ -299,6 +420,17 @@ const currentError = computed(() => {
   if (isAntigravity.value) return antigravityOAuth.error.value
   if (isGrok.value) return grokOAuth.error.value
   return claudeOAuth.error.value
+})
+
+const autoReauthStatusLabel = computed(() => {
+  if (!autoReauthJob.value) return ''
+  if (autoReauthJob.value.status === 'succeeded') {
+    return t('admin.accounts.oauth.openai.autoReauthSucceeded')
+  }
+  if (autoReauthJob.value.status === 'failed') {
+    return t('admin.accounts.oauth.openai.autoReauthFailed')
+  }
+  return t('admin.accounts.oauth.openai.autoReauthRunning')
 })
 
 // Computed — footer "complete auth" only for code-exchange flows, not SSO/password/RT.
@@ -355,6 +487,11 @@ watch(
 const resetState = () => {
   addMethod.value = 'oauth'
   geminiOAuthType.value = 'code_assist'
+  autoReauthLoading.value = false
+  autoReauthError.value = ''
+  stopAutoReauthPolling()
+  autoReauthJob.value = null
+  autoReauthLogVisible.value = false
   claudeOAuth.resetState()
   openaiOAuth.resetState()
   geminiOAuth.resetState()
@@ -366,6 +503,81 @@ const resetState = () => {
 const handleClose = () => {
   emit('close')
 }
+
+const handleAutoReauthorize = async () => {
+  if (!props.account || !isOpenAI.value || autoReauthLoading.value) return
+
+  autoReauthLoading.value = true
+  autoReauthError.value = ''
+  stopAutoReauthPolling()
+  autoReauthJob.value = null
+  autoReauthLogVisible.value = true
+  try {
+    autoReauthJob.value = await adminAPI.accounts.autoReauthorize(props.account.id)
+    await pollAutoReauthorizeJob()
+  } catch (error: any) {
+    autoReauthError.value = extractApiErrorMessage(
+      error,
+      t('admin.accounts.oauth.openai.autoReauthFailed')
+    )
+    appStore.showError(autoReauthError.value)
+    autoReauthLoading.value = false
+  } finally {
+    if (!autoReauthJob.value) {
+      autoReauthLogVisible.value = false
+    }
+  }
+}
+
+const stopAutoReauthPolling = () => {
+  if (autoReauthPollTimer !== null) {
+    window.clearTimeout(autoReauthPollTimer)
+    autoReauthPollTimer = null
+  }
+}
+
+const pollAutoReauthorizeJob = async () => {
+  const job = autoReauthJob.value
+  if (!job || !props.account) return
+
+  try {
+    autoReauthJob.value = await adminAPI.accounts.getAutoReauthorizeJob(props.account.id, job.job_id)
+    const latest = autoReauthJob.value
+    if (latest.status === 'succeeded') {
+      autoReauthLoading.value = false
+      appStore.showSuccess(t('admin.accounts.reAuthorizedSuccess'))
+      if (latest.account) {
+        emit('reauthorized', latest.account)
+      }
+      return
+    }
+    if (latest.status === 'failed') {
+      autoReauthLoading.value = false
+      autoReauthError.value = latest.error || t('admin.accounts.oauth.openai.autoReauthFailed')
+      appStore.showError(autoReauthError.value)
+      return
+    }
+    autoReauthPollTimer = window.setTimeout(() => {
+      void pollAutoReauthorizeJob()
+    }, 1000)
+  } catch (error: any) {
+    autoReauthLoading.value = false
+    autoReauthError.value = extractApiErrorMessage(
+      error,
+      t('admin.accounts.oauth.openai.autoReauthFailed')
+    )
+    appStore.showError(autoReauthError.value)
+  }
+}
+
+const formatAutoReauthLogTime = (value: string) => {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString()
+}
+
+onUnmounted(() => {
+  stopAutoReauthPolling()
+})
 
 const handleGenerateUrl = async () => {
   if (!props.account) return

@@ -1,2 +1,7 @@
 .cache/
 .DS_Store
+._*
+**/._*
+.AppleDouble
+.LSOverride
+__MACOSX/

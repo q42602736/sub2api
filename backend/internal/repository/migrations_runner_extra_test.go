@@ -68,6 +68,20 @@ func TestLatestMigrationBaseline(t *testing.T) {
 	})
 }
 
+func TestMigrationFilesIgnoreMacOSMetadata(t *testing.T) {
+	fsys := fstest.MapFS{
+		"._001_init.sql": &fstest.MapFile{Data: []byte{0, 1, 2}},
+		"001_init.sql":   &fstest.MapFile{Data: []byte("CREATE TABLE one (id INT);")},
+		"_002_noise.sql": &fstest.MapFile{Data: []byte{3, 4, 5}},
+		"002_next.sql":   &fstest.MapFile{Data: []byte("CREATE TABLE two (id INT);")},
+	}
+
+	files, err := migrationFiles(fsys)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"001_init.sql", "002_next.sql"}, files)
+}
+
 func TestIsMigrationChecksumCompatible_AdditionalCases(t *testing.T) {
 	require.False(t, isMigrationChecksumCompatible("unknown.sql", "db", "file"))
 

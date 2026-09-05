@@ -17,15 +17,17 @@ type OpenAIOAuthService struct {
 	sessionStore         *openai.SessionStore
 	proxyRepo            ProxyRepository
 	oauthClient          OpenAIOAuthClient
+	autoAuthClient       OpenAIAutoAuthClient
 	privacyClientFactory PrivacyClientFactory // 用于调用 chatgpt.com/backend-api（ImpersonateChrome）
 }
 
 // NewOpenAIOAuthService creates a new OpenAI OAuth service
 func NewOpenAIOAuthService(proxyRepo ProxyRepository, oauthClient OpenAIOAuthClient) *OpenAIOAuthService {
 	return &OpenAIOAuthService{
-		sessionStore: openai.NewSessionStore(),
-		proxyRepo:    proxyRepo,
-		oauthClient:  oauthClient,
+		sessionStore:   openai.NewSessionStore(),
+		proxyRepo:      proxyRepo,
+		oauthClient:    oauthClient,
+		autoAuthClient: NewOpenAIHTTPAutoAuthClient(defaultOpenAIAutoAuthConfig()),
 	}
 }
 
@@ -33,6 +35,11 @@ func NewOpenAIOAuthService(proxyRepo ProxyRepository, oauthClient OpenAIOAuthCli
 // 用于调用 chatgpt.com/backend-api 获取账号信息（plan_type 等）。
 func (s *OpenAIOAuthService) SetPrivacyClientFactory(factory PrivacyClientFactory) {
 	s.privacyClientFactory = factory
+}
+
+// SetAutoAuthClient 注入容器内自动完成 OpenAI 登录和邮箱验证码的客户端。
+func (s *OpenAIOAuthService) SetAutoAuthClient(client OpenAIAutoAuthClient) {
+	s.autoAuthClient = client
 }
 
 // OpenAIAuthURLResult contains the authorization URL and session info

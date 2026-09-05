@@ -36,6 +36,7 @@ type stubAdminService struct {
 	bulkUpdateAccountErr                error
 	lastBulkUpdateAccountInput          *service.BulkUpdateAccountsInput
 	getAccountResult                    *service.Account
+	getAccountsByIDsResult              []*service.Account
 	updateAccountCalls                  int
 	updateAccountExtraCalls             int
 	checkMixedErr                       error
@@ -472,6 +473,9 @@ func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.A
 }
 
 func (s *stubAdminService) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*service.Account, error) {
+	if s.getAccountsByIDsResult != nil {
+		return s.getAccountsByIDsResult, nil
+	}
 	out := make([]*service.Account, 0, len(ids))
 	for _, id := range ids {
 		account := service.Account{ID: id, Name: "account", Status: service.StatusActive}

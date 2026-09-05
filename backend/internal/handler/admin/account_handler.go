@@ -64,6 +64,11 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
+	autoReauthExecutionMu   sync.Mutex
+	autoReauthJobs          *autoReauthJobStore
+	autoReauthJobsMu        sync.Mutex
+	autoReauthBatchJobs     *autoReauthBatchJobStore
+	autoReauthBatchJobsMu   sync.Mutex
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -107,6 +112,8 @@ func NewAccountHandler(
 		sessionLimitCache:       sessionLimitCache,
 		rpmCache:                rpmCache,
 		tokenCacheInvalidator:   tokenCacheInvalidator,
+		autoReauthJobs:          newAutoReauthJobStore(),
+		autoReauthBatchJobs:     newAutoReauthBatchJobStore(),
 	}
 }
 
@@ -1436,6 +1443,12 @@ func (h *AccountHandler) Refresh(c *gin.Context) {
 	}
 
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), updatedAccount))
+}
+
+// AutoReauthorize 在容器内完成 OpenAI 邮箱验证码授权，并原子更新账号凭据。
+// POST /api/v1/admin/accounts/:id/auto-reauthorize
+func (h *AccountHandler) AutoReauthorize(c *gin.Context) {
+	h.startAutoReauthorize(c)
 }
 
 // ApplyOAuthCredentialsRequest is the payload for persisting re-authorized OAuth credentials.
