@@ -1046,6 +1046,8 @@ export default {
         step2OpenUrl: 'Open the URL in your browser and complete authorization',
         openUrlDesc:
           'Open the authorization URL in a new tab, log in to your Claude account and authorize.',
+        openAuthUrl: 'Open in default browser',
+        openAuthUrlBlocked: 'The browser blocked the new window. Allow pop-ups and try again.',
         proxyWarning:
           'Note: If you configured a proxy, make sure your browser uses the same proxy to access the authorization page.',
         step3EnterCode: 'Enter the Authorization Code',
@@ -1073,6 +1075,7 @@ export default {
           step2OpenUrl: 'Open the URL in your browser and complete authorization',
           openUrlDesc:
             'Open the authorization URL in a new tab, log in to your OpenAI account and authorize.',
+          openAuthUrl: 'Open in default browser',
           importantNotice:
             'Important: The page may take a while to load after authorization. Please wait patiently. When the browser address bar changes to http://localhost..., the authorization is complete.',
           step3EnterCode: 'Enter Authorization URL or Code',
@@ -1168,6 +1171,7 @@ export default {
           generateAuthUrl: 'Generate Auth URL',
           step2OpenUrl: 'Open the URL in your browser and complete authorization',
           openUrlDesc: 'Open the authorization URL in a new tab, sign in to xAI, and authorize API access.',
+          openAuthUrl: 'Open in default browser',
           importantNotice: 'When the browser reaches the local callback URL, copy the full URL or the code query parameter back here.',
           step3EnterCode: 'Enter Authorization URL or Code',
           authCodeDesc: 'After authorization, paste the callback URL, query string, or authorization code:',
@@ -1235,6 +1239,7 @@ export default {
 	          step2OpenUrl: 'Open the URL in your browser and complete authorization',
 	          openUrlDesc:
 	            'Open the authorization URL in a new tab, log in to your Google account and authorize.',
+	          openAuthUrl: 'Open in default browser',
 	          step3EnterCode: 'Enter Authorization URL or Code',
 	          authCodeDesc:
 	            'After authorization, copy the callback URL (recommended) or just the code and paste it below.',
@@ -1278,6 +1283,7 @@ export default {
           generateAuthUrl: 'Generate Auth URL',
           step2OpenUrl: 'Open the URL in your browser and complete authorization',
           openUrlDesc: 'Open the authorization URL in a new tab, log in to your Google account and authorize.',
+          openAuthUrl: 'Open in default browser',
           importantNotice:
             'Important: The page may take a while to load after authorization. Please wait patiently. When the browser address bar shows http://localhost..., authorization is complete.',
           step3EnterCode: 'Enter Authorization URL or Code',

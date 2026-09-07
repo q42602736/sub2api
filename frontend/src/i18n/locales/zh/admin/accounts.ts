@@ -1114,6 +1114,8 @@ export default {
         regenerate: '重新生成',
         step2OpenUrl: '在浏览器中打开 URL 并完成授权',
         openUrlDesc: '在新标签页中打开授权 URL，登录您的 Claude 账号并授权。',
+        openAuthUrl: '使用默认浏览器打开',
+        openAuthUrlBlocked: '浏览器拦截了新窗口，请允许弹窗后重试。',
         proxyWarning: '注意：如果您配置了代理，请确保浏览器使用相同的代理访问授权页面。',
         step3EnterCode: '输入授权码',
         authCodeDesc: '授权完成后，页面会显示一个授权码。复制并粘贴到下方：',
@@ -1138,6 +1140,7 @@ export default {
           generateAuthUrl: '生成授权链接',
           step2OpenUrl: '在浏览器中打开链接并完成授权',
           openUrlDesc: '请在新标签页中打开授权链接，登录您的 OpenAI 账户并授权。',
+          openAuthUrl: '使用默认浏览器打开',
           importantNotice:
             '重要提示：授权后页面可能会加载较长时间，请耐心等待。当浏览器地址栏变为 http://localhost... 开头时，表示授权已完成。',
           step3EnterCode: '输入授权链接或 Code',
@@ -1232,6 +1235,7 @@ export default {
           generateAuthUrl: '生成授权链接',
           step2OpenUrl: '在浏览器中打开链接并完成授权',
           openUrlDesc: '在新标签页中打开授权链接，登录 xAI 并授权 API 访问。',
+          openAuthUrl: '使用默认浏览器打开',
           importantNotice: '当浏览器跳转到本地 callback URL 后，请复制完整 URL 或 code 参数回填到这里。',
           step3EnterCode: '输入授权链接或 Code',
           authCodeDesc: '授权完成后，粘贴 callback URL、查询字符串或授权码：',
@@ -1297,6 +1301,7 @@ export default {
           howToGetProjectId: '如何获取',
           step2OpenUrl: '在浏览器中打开链接并完成授权',
           openUrlDesc: '请在新标签页中打开授权链接，登录您的 Google 账户并授权。',
+          openAuthUrl: '使用默认浏览器打开',
           step3EnterCode: '输入回调链接或 Code',
           authCodeDesc:
             '授权完成后，复制浏览器跳转后的回调链接（推荐）或仅复制 code，粘贴到下方即可。',
@@ -1337,6 +1342,7 @@ export default {
           generateAuthUrl: '生成授权链接',
           step2OpenUrl: '在浏览器中打开链接并完成授权',
           openUrlDesc: '请在新标签页中打开授权链接，登录您的 Google 账户并授权。',
+          openAuthUrl: '使用默认浏览器打开',
           importantNotice:
             '重要提示：授权后页面可能会加载较长时间，请耐心等待。当浏览器地址栏变为 http://localhost... 开头时，表示授权已完成。',
           step3EnterCode: '输入授权链接或 Code',
