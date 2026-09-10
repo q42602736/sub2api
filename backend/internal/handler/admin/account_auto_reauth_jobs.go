@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -515,6 +516,22 @@ func (h *AccountHandler) executeAutoReauthorize(account *service.Account, report
 		}
 	} else if cleared != nil {
 		updatedAccount = cleared
+	}
+	if report != nil {
+		report("正在启用账号额度")
+	}
+	enabledAccount, enableErr := h.adminService.SetAccountSchedulable(ctx, account.ID, true)
+	if enableErr != nil {
+		if report != nil {
+			report("启用账号额度失败，新凭据已保留")
+		}
+		return nil, fmt.Errorf("自动重新授权成功，但启用账号额度失败: %w", enableErr)
+	}
+	if enabledAccount != nil {
+		updatedAccount = enabledAccount
+	}
+	if report != nil {
+		report("账号额度已启用")
 	}
 	if h.tokenCacheInvalidator != nil {
 		if report != nil {
